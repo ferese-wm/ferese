@@ -458,8 +458,7 @@ impl FereseShell {
                 };
                 let element: Element<'_, cosmic::Action<Message>> = self
                     .render
-                    .text(title)
-                    .size(bar.text_size)
+                    .panel_text(title)
                     .width(width.map_or(Length::Shrink, Length::Fixed))
                     .height(control_height)
                     .align_x(alignment::Horizontal::Center)
@@ -515,20 +514,14 @@ impl FereseShell {
                 if representation == Representation::Wide && !date.is_empty() {
                     content = content.push(
                         self.render
-                            .text(date)
-                            .size(bar.text_size)
-                            .line_height(cosmic::iced::widget::text::LineHeight::Absolute(
-                                20.into(),
-                            ))
+                            .panel_text(date)
                             .wrapping(cosmic::iced::widget::text::Wrapping::None)
                             .class(theme::Text::Color(foreground)),
                     );
                 }
                 let content = content.push(
                     self.render
-                        .text(time.to_ascii_uppercase())
-                        .size(bar.text_size)
-                        .line_height(cosmic::iced::widget::text::LineHeight::Absolute(20.into()))
+                        .panel_text(time.to_ascii_uppercase())
                         .wrapping(cosmic::iced::widget::text::Wrapping::None)
                         .class(theme::Text::Color(foreground)),
                 );
@@ -561,14 +554,14 @@ impl FereseShell {
                         bar_icon(ferese_theme::icons::DISPLAY, bar.icon_size, foreground),
                         control_height,
                     )
-                    .width(20)
+                    .width(bar.icon_slot_width)
                     .align_x(alignment::Horizontal::Center),
                 )
                 .name("Display mode")
                 .height(control_height)
                 .padding([
                     0.0,
-                    ((bar.height - f32::from(bar.icon_size.max(20))) * 0.5).max(4.0),
+                    ((bar.height - f32::from(bar.icon_slot_width)) * 0.5).max(4.0),
                 ])
                 .on_press(cosmic::Action::App(Message::OpenDisplays(
                     self.outputs
@@ -867,14 +860,10 @@ pub(super) fn overview_control(
     foreground: Color,
 ) -> Element<'static, cosmic::Action<Message>> {
     bar_content(
-        bar_icon(
-            ferese_theme::icons::FERESE,
-            bar.overview_icon_size,
-            foreground,
-        ),
+        bar_icon(ferese_theme::icons::FERESE, bar.icon_size, foreground),
         bar.control_height,
     )
-    .width(bar.overview_icon_size.max(20))
+    .width(bar.icon_slot_width)
     .align_x(alignment::Horizontal::Center)
     .into()
 }

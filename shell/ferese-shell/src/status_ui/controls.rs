@@ -1,122 +1,10 @@
 use cosmic::iced::border::Shape as BorderShape;
-use cosmic::iced::{Alignment, Background, Border, Color, Length};
+use cosmic::iced::{Alignment, Border, Color, Length};
 use cosmic::widget::{button, column, container, row, slider};
 use cosmic::{Element, theme};
 
 use crate::status::Action;
-use crate::{Message, ShellTheme, accented_icon, color, color_with_opacity, motion};
-
-pub(super) fn status_summary<'a>(
-    render: crate::rendering::Rendering,
-    source: &'static [u8],
-    title: &'a str,
-    subtitle: &'a str,
-    style: super::MenuStyle,
-    enabled: bool,
-    toggle: Option<(bool, Action)>,
-) -> Element<'a, cosmic::Action<Message>> {
-    let super::MenuStyle {
-        theme,
-        primary,
-        muted,
-        opacity,
-    } = style;
-    let accent = color_with_opacity(theme.accent, opacity);
-    let badge_color = if enabled { accent } else { primary };
-    let badge = container(accented_icon(source, 18, primary, accent))
-        .center_x(28)
-        .center_y(28)
-        .class(theme::Container::custom(move |_| container::Style {
-            background: Some(Background::Color(Color {
-                a: if enabled {
-                    0.22 * opacity
-                } else {
-                    0.06 * opacity
-                },
-                ..badge_color
-            })),
-            border: Border {
-                shape: BorderShape::Continuous,
-                radius: render.radius(10.0).into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        }));
-    let badge: Element<'_, cosmic::Action<Message>> = if let Some((_, action)) = toggle {
-        motion::button(
-            render,
-            button::custom(badge)
-                .padding(0)
-                .name(if enabled { "Turn off" } else { "Turn on" })
-                .on_press(cosmic::Action::App(Message::Control(action))),
-            badge_color,
-            false,
-            opacity,
-        )
-    } else {
-        badge.into()
-    };
-    let summary = row![
-        badge,
-        column![
-            render
-                .text(title)
-                .size(13)
-                .width(Length::Fill)
-                .wrapping(cosmic::iced::widget::text::Wrapping::None)
-                .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
-                    cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
-                )),
-            render
-                .text(subtitle)
-                .size(11)
-                .class(theme::Text::Color(muted)),
-        ]
-        .spacing(2)
-        .width(Length::Fill)
-    ]
-    .spacing(8)
-    .align_y(Alignment::Center);
-    summary.into()
-}
-
-pub(super) fn level_meter(
-    render: crate::rendering::Rendering,
-    value: u8,
-    foreground: Color,
-    opacity: f32,
-) -> Element<'static, cosmic::Action<Message>> {
-    let segment = move |amount: u16, filled: bool| {
-        container(render.text(""))
-            .width(Length::FillPortion(amount))
-            .height(5)
-            .class(theme::Container::custom(move |_| container::Style {
-                background: Some(Background::Color(if filled {
-                    foreground
-                } else {
-                    Color {
-                        a: 0.1 * opacity,
-                        ..foreground
-                    }
-                })),
-                border: Border {
-                    shape: BorderShape::Continuous,
-                    radius: render.radius(2.5).into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }))
-    };
-    let value = u16::from(value.min(100));
-    let mut meter = row::with_capacity(2).width(Length::Fill);
-    if value > 0 {
-        meter = meter.push(segment(value, true));
-    }
-    if value < 100 {
-        meter = meter.push(segment(100 - value, false));
-    }
-    meter.into()
-}
+use crate::{Message, ShellTheme, color, motion};
 
 pub(super) fn control_card<'a>(
     render: crate::rendering::Rendering,
@@ -161,6 +49,7 @@ pub(super) fn shell_switch<'a>(
     motion::button(
         render,
         button::custom(toggle)
+            .id(cosmic::widget::Id::new(format!("switch:{label}:{enabled}")))
             .padding(4)
             .name(format!("{label}: {}", if enabled { "on" } else { "off" }))
             .on_press(cosmic::Action::App(Message::Control(action))),

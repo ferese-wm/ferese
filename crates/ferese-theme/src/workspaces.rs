@@ -73,11 +73,10 @@ pub fn indicator<'workspace, M: 'workspace>(
             };
 
             crate::text(label, font)
-                .size(if style == WorkspaceStyle::Tabs {
-                    11
-                } else {
-                    12
-                })
+                .size(crate::panel::TEXT_SIZE)
+                .line_height(cosmic::iced::widget::text::LineHeight::Absolute(
+                    crate::panel::TEXT_LINE_HEIGHT.into(),
+                ))
                 .width(width(style) - 8.)
                 .align_x(cosmic::iced::alignment::Horizontal::Center)
                 .wrapping(cosmic::iced::widget::text::Wrapping::None)
@@ -123,7 +122,7 @@ pub fn indicator<'workspace, M: 'workspace>(
             ))
             .symbolic(false)
             .icon()
-            .size(20)
+            .size(crate::panel::ICON_SIZE)
             .class(theme::Svg::custom(|_| cosmic::iced::widget::svg::Style {
                 color: None,
             }))

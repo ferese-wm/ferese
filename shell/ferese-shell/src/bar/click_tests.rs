@@ -65,6 +65,7 @@ fn panel_controls_open_popovers_after_a_press_redraw_and_release() {
                 enabled: true,
                 connection: Some("Test network".into()),
                 signal: 80,
+                ..Default::default()
             });
             let mut tree = widget::Tree::empty();
             dispatch(

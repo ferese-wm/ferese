@@ -73,9 +73,8 @@ fn configured_font(family: Option<&str>) -> cosmic::font::Font {
 #[derive(Clone, Copy)]
 struct BarMetrics {
     height: f32,
-    text_size: u16,
     icon_size: u16,
-    overview_icon_size: u16,
+    icon_slot_width: u16,
     control_height: f32,
     group_item_height: f32,
 }
@@ -92,9 +91,8 @@ impl From<panel::PanelGeometry> for BarMetrics {
             height,
             // Logical sizes: Wayland/iced applies each surface's output scale.
             // Compacting the bar must not also shrink its readable content.
-            text_size: 14,
-            icon_size: 16,
-            overview_icon_size: 16,
+            icon_size: ferese_theme::panel::ICON_SIZE,
+            icon_slot_width: ferese_theme::panel::ICON_SLOT_WIDTH,
             control_height,
             group_item_height: (group_height - 4.0).max(0.0),
         }
@@ -167,6 +165,7 @@ struct FereseShell {
     notification_surface: Option<notification_ui::NotificationSurface>,
     status_service: status::Service,
     status: status::Snapshot,
+    connections: status_ui::connections::State,
     recorder: recording::Recorder,
     capture_status: capture_status::Model,
     media: media::Model,
@@ -288,6 +287,7 @@ enum Message {
     OpenMenu(status_ui::Menu, cosmic::iced::Rectangle<i32>),
     OpenPopover(status_ui::Menu, status_ui::PopoverAnchor),
     Control(status::Action),
+    Connections(status_ui::connections::Event),
     ShowGuide,
     GuideLoaded {
         generation: u64,
@@ -356,6 +356,7 @@ impl cosmic::Application for FereseShell {
             notification_surface: None,
             status_service: status::Service::start(config.status.settings_command.clone()),
             status: status::Snapshot::default(),
+            connections: Default::default(),
             recorder: recording::Recorder::default(),
             capture_status: capture_status::Model::new(),
             media: media::Model::default(),
@@ -478,6 +479,7 @@ impl cosmic::Application for FereseShell {
 
     fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
         let task = match message {
+            Message::Connections(event) => self.update_connections(event),
             Message::Launcher(message) => self.update_launcher(message),
             Message::LauncherEnter(id, alt) => {
                 if self.launcher.as_ref().is_some_and(|l| l.id == id) {
@@ -1127,6 +1129,7 @@ impl cosmic::Application for FereseShell {
             }
         };
         self.flush_config_error();
+        self.sync_connection_discovery();
         if let Some(control) = &self.control {
             control.set_background_title_updates(
                 self.launcher.is_some()
@@ -1383,8 +1386,11 @@ mod tests {
                 config.animations,
             ),
             notification_surface: None,
-            status_service: status::Service::start(None),
+            // Layout and interaction tests supply snapshots directly. Native
+            // service workers belong to the separate private-bus tests.
+            status_service: status::Service::disconnected_for_test(),
             status: Default::default(),
+            connections: Default::default(),
             recorder: Default::default(),
             capture_status: Default::default(),
             media: Default::default(),
@@ -1895,9 +1901,8 @@ mod tests {
                 height,
                 ..Default::default()
             });
-            assert_eq!(metrics.text_size, 14);
             assert_eq!(metrics.icon_size, 16);
-            assert_eq!(metrics.overview_icon_size, 16);
+            assert!(metrics.icon_slot_width >= metrics.icon_size);
             assert!(metrics.control_height >= f32::from(metrics.icon_size));
             assert!(metrics.control_height <= height);
         }

@@ -4,6 +4,7 @@ mod bar;
 mod battery;
 mod bluetooth;
 mod calendar;
+pub(crate) mod connections;
 mod controls;
 #[cfg(test)]
 mod layout_tests;
@@ -64,9 +65,13 @@ impl Menu {
                 (
                     Self::NightLight,
                     Action::NightLight(_) | Action::NightLightTemperature(_)
-                ) | (Self::Network, Action::Wifi(_))
-                    | (Self::Bluetooth, Action::Bluetooth(_))
-                    | (Self::Audio, Action::Volume(_) | Action::Mute(_))
+                ) | (
+                    Self::Network,
+                    Action::Wifi(_) | Action::Discover(status::Discovery::Wifi)
+                ) | (
+                    Self::Bluetooth,
+                    Action::Bluetooth(_) | Action::Discover(status::Discovery::Bluetooth)
+                ) | (Self::Audio, Action::Volume(_) | Action::Mute(_))
                     | (
                         Self::Battery,
                         Action::Brightness(_) | Action::PowerProfile(_)
@@ -203,17 +208,13 @@ impl FereseShell {
             opacity,
         };
         let mut rows = column::with_capacity(8).spacing(8).width(Length::Fill);
-        if kind == Menu::Network
-            && let Some(network) = &self.status.network
-        {
-            rows = rows.push(toggle_row(
-                self.render,
-                "Wi-Fi",
-                network.enabled,
-                Action::Wifi(!network.enabled),
-                theme,
-                opacity,
-            ));
+        if matches!(kind, Menu::Network | Menu::Bluetooth) {
+            let heading = connections::heading(self, kind, style);
+            rows = rows.push(if kind == Menu::Network {
+                network::heading(self, heading, style)
+            } else {
+                bluetooth::heading(self, heading, style)
+            });
         }
         if kind == Menu::Audio
             && let Some(audio) = &self.status.audio
@@ -231,7 +232,7 @@ impl FereseShell {
             Menu::System => system::view(self, rows, style, true),
             Menu::NightLight => night_light::view(self, rows, style),
             Menu::Network => network::view(self, rows, style),
-            Menu::Bluetooth => bluetooth::view(self, rows, style, true),
+            Menu::Bluetooth => bluetooth::view(self, rows, style),
             Menu::Audio => audio::view(self, rows, style, false),
             Menu::Battery => battery::view(self, rows, style),
             Menu::Calendar => rows.push(calendar::hub(
@@ -435,21 +436,25 @@ impl FereseShell {
             muted,
             opacity: p,
         };
+        if matches!(kind, Menu::Network | Menu::Bluetooth) {
+            heading = connections::heading(self, kind, style);
+        }
         heading = match kind {
             Menu::System => system::heading(self, heading, style),
             Menu::Network => network::heading(self, heading, style),
+            Menu::Bluetooth => bluetooth::heading(self, heading, style),
             Menu::Audio => audio::heading(self, heading, style),
             _ => heading,
         };
         let mut rows = column::with_capacity(12).spacing(8).width(Length::Fill);
-        if kind != Menu::Calendar {
+        if !matches!(kind, Menu::Calendar | Menu::Battery) {
             rows = rows.push(heading);
         }
         rows = match kind {
             Menu::System => system::view(self, rows, style, false),
             Menu::NightLight => night_light::view(self, rows, style),
             Menu::Network => network::view(self, rows, style),
-            Menu::Bluetooth => bluetooth::view(self, rows, style, false),
+            Menu::Bluetooth => bluetooth::view(self, rows, style),
             Menu::Audio => audio::view(self, rows, style, false),
             Menu::Battery => battery::view(self, rows, style),
             Menu::Calendar => {

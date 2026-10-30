@@ -501,6 +501,7 @@ impl FereseShell {
         activity: &Activity,
         color: cosmic::iced::Color,
         animate: bool,
+        diameter: f32,
     ) -> Element<'_, cosmic::Action<Message>> {
         let reduced = !self.render.motion.motion_enabled();
         let progress = match activity.data.value {
@@ -519,19 +520,29 @@ impl FereseShell {
                 && !matches!(activity.data.value, Value::PausedCountdown { .. }),
             reduced,
             ring_color,
+            diameter,
         );
         let center: Element<'_, cosmic::Action<Message>> =
             if let Some(percent) = progress_percent(activity) {
                 self.render
                     .text(percent.to_string())
-                    .size(if percent == 100 { 9. } else { 10. })
+                    .size(diameter * if percent == 100 { 9. / 26. } else { 10. / 26. })
                     .line_height(cosmic::iced::widget::text::LineHeight::Relative(1.))
                     .class(theme::Text::Color(color))
                     .into()
             } else {
-                icons::tinted(icon(&activity.data.icon), 14, color).into()
+                icons::tinted(
+                    icon(&activity.data.icon),
+                    (14. * diameter / 26.).round() as u16,
+                    color,
+                )
+                .into()
             };
-        cosmic::iced::widget::stack![ring, container(center).center_x(26).center_y(26)].into()
+        cosmic::iced::widget::stack![
+            ring,
+            container(center).center_x(diameter).center_y(diameter)
+        ]
+        .into()
     }
     pub fn activity_available(&self, id: window::Id) -> bool {
         let name = self
@@ -616,9 +627,14 @@ impl FereseShell {
             } else {
                 palette.text
             };
-        let mut content = row![self.activity_icon(activity, foreground, width.is_some())]
-            .spacing(6)
-            .align_y(Alignment::Center);
+        let mut content = row![self.activity_icon(
+            activity,
+            foreground,
+            width.is_some(),
+            f32::from(ferese_theme::panel::ICON_SLOT_WIDTH)
+        )]
+        .spacing(6)
+        .align_y(Alignment::Center);
         let budget = if representation == Representation::Wide {
             190.
         } else {
@@ -627,7 +643,7 @@ impl FereseShell {
         if representation != Representation::Icon {
             content = content.push(
                 self.render
-                    .text(if representation == Representation::Wide {
+                    .panel_text(if representation == Representation::Wide {
                         detail(activity).map_or_else(
                             || activity.data.title.clone(),
                             |detail| format!("{} · {detail}", activity.data.title),
@@ -635,7 +651,6 @@ impl FereseShell {
                     } else {
                         activity.data.title.clone()
                     })
-                    .size(13)
                     .width(Length::Fill)
                     .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
                         cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
@@ -980,9 +995,9 @@ impl FereseShell {
             let title = self
                 .render
                 .text(activity.data.title.clone())
-                .size(12)
+                .size(ferese_theme::panel::TEXT_SIZE)
                 .width(Length::Fill)
-                .line_height(cosmic::iced::widget::text::LineHeight::Relative(1.1))
+                .line_height(cosmic::iced::widget::text::LineHeight::Absolute(13.into()))
                 .class(theme::Text::Color(palette.text.scale_alpha(opacity)))
                 .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
                     cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
@@ -992,12 +1007,12 @@ impl FereseShell {
                 text = text.push(
                     self.render
                         .text(detail)
-                        .size(10)
+                        .size(11)
                         .width(Length::Fill)
                         .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
                             cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
                         ))
-                        .line_height(cosmic::iced::widget::text::LineHeight::Relative(1.1))
+                        .line_height(cosmic::iced::widget::text::LineHeight::Absolute(11.into()))
                         .class(theme::Text::Color(palette.text.scale_alpha(opacity * 0.7))),
                 );
             }
@@ -1005,7 +1020,12 @@ impl FereseShell {
                 .center_y(26)
                 .width(presentation.compact.text_width(identity));
             let item = row![
-                self.activity_icon(activity, tint.scale_alpha(opacity), !intrinsic),
+                self.activity_icon(
+                    activity,
+                    tint.scale_alpha(opacity),
+                    !intrinsic,
+                    f32::from(ferese_theme::panel::ICON_SLOT_WIDTH)
+                ),
                 text
             ]
             .spacing(compact::TEXT_GAP)
@@ -1147,7 +1167,7 @@ impl FereseShell {
             let text = container(text).center_y(28).width(Length::Fill);
             let mut body = column![
                 row![
-                    self.activity_icon(activity, palette.text.scale_alpha(opacity), false),
+                    self.activity_icon(activity, palette.text.scale_alpha(opacity), false, 26.),
                     text
                 ]
                 .spacing(8)

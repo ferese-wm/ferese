@@ -61,7 +61,7 @@ impl FereseShell {
             theme.text_muted
         });
         let mut indicator = if kind == Menu::Battery {
-            self.battery_indicator(theme, 1.0, battery_percentage)
+            self.battery_indicator(theme, 1.0, battery_percentage, 14.)
         } else {
             accented_icon(source, metrics.icon_size, foreground, color(theme.accent)).into()
         };
@@ -96,19 +96,21 @@ impl FereseShell {
         let icon_width = if kind == Menu::Battery {
             crate::battery_indicator::WIDTH
         } else {
-            f32::from(metrics.icon_size.max(20))
+            f32::from(metrics.icon_slot_width)
         };
-        let mut content = row![container(indicator).center_x(icon_width)]
-            .spacing(4)
-            .align_y(Alignment::Center);
+        let indicator = if kind == Menu::Battery {
+            container(indicator)
+        } else {
+            container(indicator).center_x(icon_width)
+        };
+        let mut content = row![indicator].spacing(4).align_y(Alignment::Center);
 
         if kind == Menu::Recording
             && let Some(elapsed) = self.recorder.elapsed()
         {
             content = content.push(
                 self.render
-                    .text(elapsed)
-                    .size(metrics.text_size)
+                    .panel_text(elapsed)
                     .class(theme::Text::Color(foreground)),
             );
         }
@@ -237,26 +239,10 @@ pub(super) fn status_icon(kind: Menu, s: &Snapshot) -> (&'static [u8], bool) {
         Menu::Recording => (ferese_theme::icons::RECORD, true),
         Menu::CaptureStatus => (ferese_theme::icons::DISPLAY, true),
         Menu::Media => (ferese_theme::icons::MEDIA, true),
-        Menu::Battery => {
-            let Some(b) = &s.battery else {
-                return (ferese_theme::icons::BATTERY_EMPTY, false);
-            };
-            let icon: &'static [u8] = if matches!(b.status.as_str(), "Charging" | "Pending charge")
-            {
-                ferese_theme::icons::BATTERY_CHARGING
-            } else if b.percent >= 80 {
-                ferese_theme::icons::BATTERY_FULL
-            } else if b.percent >= 50 {
-                ferese_theme::icons::BATTERY_75
-            } else if b.percent >= 20 {
-                ferese_theme::icons::BATTERY_50
-            } else if b.percent > 0 {
-                ferese_theme::icons::BATTERY_25
-            } else {
-                ferese_theme::icons::BATTERY_EMPTY
-            };
-            (icon, true)
-        }
+        Menu::Battery => (
+            crate::battery_indicator::icon(s.battery.as_ref()),
+            s.battery.is_some(),
+        ),
         Menu::Notifications => {
             if s.notifications.as_ref().is_some_and(|n| n.dnd) {
                 (ferese_theme::icons::NOTIFICATIONS_OFF, false)
@@ -371,6 +357,7 @@ mod tests {
         s.bluetooth = Some(status::Bluetooth {
             enabled: false,
             devices: vec!["Headphones".into()],
+            ..Default::default()
         });
         assert_eq!(
             status_icon(Menu::Bluetooth, &s).0,

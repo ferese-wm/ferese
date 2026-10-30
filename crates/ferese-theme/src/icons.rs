@@ -50,6 +50,7 @@ pub const BRIGHTNESS: &[u8] = include_bytes!("../assets/icons/status/brightness.
 pub const APPEARANCE: &[u8] = include_bytes!("../assets/icons/status/appearance.svg");
 pub const CALENDAR: &[u8] = include_bytes!("../assets/icons/status/calendar.svg");
 pub const CHEVRON_DOWN: &[u8] = include_bytes!("../assets/icons/status/chevron-down.svg");
+pub const CHEVRON_LEFT: &[u8] = include_bytes!("../assets/icons/status/chevron-left.svg");
 pub const CHEVRON_UP: &[u8] = include_bytes!("../assets/icons/status/chevron-up.svg");
 pub const CLOSE: &[u8] = include_bytes!("../assets/icons/status/close.svg");
 pub const CONTROL_CENTER: &[u8] = include_bytes!("../assets/icons/status/control-center.svg");

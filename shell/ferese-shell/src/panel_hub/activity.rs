@@ -147,7 +147,7 @@ impl FereseShell {
         };
         if priority == Peek::Battery {
             return row![
-                self.battery_indicator(self.config.theme, opacity, true),
+                self.battery_indicator(self.config.theme, opacity, true, 14.),
                 self.render
                     .text("Low battery")
                     .size(13)
@@ -241,7 +241,7 @@ impl FereseShell {
             };
             strip = strip.push(
                 button::custom(crate::bar_content(
-                    self.battery_indicator(self.config.theme, opacity, true),
+                    self.battery_indicator(self.config.theme, opacity, true, 14.),
                     28.,
                 ))
                 .name(format!(

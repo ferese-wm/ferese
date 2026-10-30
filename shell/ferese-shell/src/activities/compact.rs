@@ -5,7 +5,7 @@ use cosmic::iced::advanced::text::{self, Paragraph};
 use ferese_activities::{Activity, Id, Selection};
 
 pub(super) const PADDING: f32 = 14.;
-pub(super) const ICON: f32 = 26.;
+pub(super) const ICON: f32 = ferese_theme::panel::ICON_SLOT_WIDTH as f32;
 pub(super) const TEXT_GAP: f32 = 6.;
 pub(super) const ITEM_GAP: f32 = 8.;
 
@@ -46,7 +46,9 @@ impl Compact {
                     entry.id.clone(),
                     (
                         title.clone(),
-                        text_width(title, 12., font).ceil().clamp(48., 100.),
+                        text_width(title, f32::from(ferese_theme::panel::TEXT_SIZE), font)
+                            .ceil()
+                            .clamp(48., 100.),
                     ),
                 );
             }

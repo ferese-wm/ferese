@@ -7,7 +7,7 @@ use super::Network;
 const SERVICE: &str = "org.freedesktop.NetworkManager";
 const ROOT: &str = "/org/freedesktop/NetworkManager";
 
-fn property<T: TryFrom<zbus::zvariant::OwnedValue>>(
+pub(super) fn property<T: TryFrom<zbus::zvariant::OwnedValue>>(
     connection: &Connection,
     path: &str,
     interface: &str,
@@ -31,6 +31,14 @@ where
 }
 
 pub(super) fn read(connection: &Connection) -> zbus::Result<Option<Network>> {
+    read_with_options(connection, false)
+}
+
+pub(super) fn read_available(connection: &Connection) -> zbus::Result<Option<Network>> {
+    read_with_options(connection, true)
+}
+
+fn read_with_options(connection: &Connection, available: bool) -> zbus::Result<Option<Network>> {
     let devices: Vec<OwnedObjectPath> = property(connection, ROOT, SERVICE, "Devices")?;
     let mut wifi = Vec::new();
     for device in devices {
@@ -50,10 +58,23 @@ pub(super) fn read(connection: &Connection) -> zbus::Result<Option<Network>> {
     // Stable selection when several Wi-Fi adapters have active connections.
     wifi.sort_by(|a, b| a.as_str().cmp(b.as_str()));
     let enabled = property(connection, ROOT, SERVICE, "WirelessEnabled")?;
+    let (networks, scan_error) = if enabled && available {
+        match super::wireless::wifi_networks(connection, &wifi) {
+            Ok(networks) => (Some(networks), None),
+            Err(_) => (
+                Some(Vec::new()),
+                Some("Could not load available networks. Try refreshing.".into()),
+            ),
+        }
+    } else {
+        (None, None)
+    };
     let mut result = Network {
         enabled,
         connection: None,
         signal: 0,
+        available: networks,
+        scan_error,
     };
     if enabled {
         for device in wifi {
@@ -64,6 +85,15 @@ pub(super) fn read(connection: &Connection) -> zbus::Result<Option<Network>> {
                 "ActiveAccessPoint",
             )?;
             if ap.as_str() == "/" {
+                continue;
+            }
+            let state: u32 = property(
+                connection,
+                device.as_str(),
+                "org.freedesktop.NetworkManager.Device",
+                "State",
+            )?;
+            if state != 100 {
                 continue;
             }
             let ssid: Vec<u8> = property(
@@ -116,6 +146,14 @@ mod tests {
         #[zbus(property)]
         fn device_type(&self) -> u32 {
             if self.0.lock().unwrap().wifi { 2 } else { 1 }
+        }
+        #[zbus(property)]
+        fn state(&self) -> u32 {
+            if self.0.lock().unwrap().active {
+                100
+            } else {
+                30
+            }
         }
     }
     struct Wireless(Arc<Mutex<State>>);

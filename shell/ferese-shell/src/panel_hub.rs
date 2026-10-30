@@ -403,6 +403,7 @@ impl FereseShell {
     }
 
     pub(super) fn close_hub(&mut self, id: window::Id) -> Task<Message> {
+        self.clear_connection_input(id);
         self.night_light_temperature = None;
         self.transition_hub(id, Event::Close)
     }
@@ -4016,6 +4017,7 @@ mod tests {
                         enabled: name == "wifi-connected",
                         connection: (name == "wifi-connected").then(|| "Home network".into()),
                         signal: 80,
+                        ..Default::default()
                     });
                 }
                 shell.outputs[0].size = Some((

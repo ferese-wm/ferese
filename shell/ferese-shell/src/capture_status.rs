@@ -242,11 +242,10 @@ impl crate::FereseShell {
         if representation != ferese_panel::Representation::Icon {
             content = content.push(
                 self.render
-                    .text(
+                    .panel_text(
                         self.capture_status
                             .bar_label(representation == ferese_panel::Representation::Compact),
                     )
-                    .size(metrics.text_size)
                     .class(theme::Text::Color(foreground)),
             );
         }

@@ -438,13 +438,20 @@ impl App {
             .spacing(5)
             .align_y(Alignment::Center)
             .push(
-                container(icons::tinted(source, 16, palette.text))
-                    .id(format!("preview-icon:{}", item.id.0)),
+                container(icons::tinted(
+                    source,
+                    ferese_theme::panel::ICON_SIZE,
+                    palette.text,
+                ))
+                .id(format!("preview-icon:{}", item.id.0)),
             );
 
         if !label.is_empty() {
             content = content.push(
-                self.label(label, 12.)
+                self.label(label, f32::from(ferese_theme::panel::TEXT_SIZE))
+                    .line_height(cosmic::iced::widget::text::LineHeight::Absolute(
+                        ferese_theme::panel::TEXT_LINE_HEIGHT.into(),
+                    ))
                     .wrapping(cosmic::iced::widget::text::Wrapping::None),
             );
         }

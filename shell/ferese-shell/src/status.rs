@@ -2,12 +2,15 @@
 mod audio_cache;
 mod bluetooth;
 mod dbus_cache;
+mod discovery;
 mod hardware;
 mod network;
 mod night_light;
+pub(crate) mod wireless;
 
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::{Duration, Instant};
@@ -28,17 +31,29 @@ pub struct Snapshot {
     pub suspend: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Network {
     pub enabled: bool,
     pub connection: Option<String>,
     pub signal: u8,
+    pub available: Option<Vec<wireless::WifiNetwork>>,
+    pub scan_error: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Bluetooth {
     pub enabled: bool,
     pub devices: Vec<String>,
+    pub available: Option<Vec<wireless::BluetoothDevice>>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Discovery {
+    #[default]
+    None,
+    Wifi,
+    Bluetooth,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -68,6 +83,8 @@ pub struct Notifications {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
+    Discover(Discovery),
+    Refresh,
     Wifi(bool),
     Bluetooth(bool),
     Volume(u8),
@@ -108,6 +125,7 @@ pub struct Service {
     tx: SyncSender<(u64, Action)>,
     updates: Updates,
     pub generation: u64,
+    requested_discovery: Discovery,
 }
 
 // The receiver stays with the service so a subscription can start after the
@@ -168,6 +186,85 @@ fn wake_status(shared: &PollState) {
     }
 }
 
+fn command_worker(
+    commands: mpsc::Receiver<(u64, Action)>,
+    settings: Arc<Mutex<Option<Vec<String>>>>,
+    shared: Arc<PollState>,
+    discovery: Arc<AtomicU8>,
+    mut discover: impl FnMut(Discovery) -> Result<(), String>,
+) {
+    let mut retry = discovery::Retry::default();
+    loop {
+        let first = if let Some(deadline) = retry.next_retry() {
+            match commands.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+                Ok(command) => command,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    let id = shared
+                        .0
+                        .lock()
+                        .expect("status command state remains consistent")
+                        .0;
+                    (id, Action::Discover(retry.requested))
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        } else {
+            let Ok(command) = commands.recv() else {
+                break;
+            };
+            command
+        };
+        let mut pending = vec![first];
+
+        for command in commands.try_iter() {
+            pending.retain(|(_, action)| action.key() != command.1.key());
+            pending.push(command);
+        }
+
+        for (id, action) in pending {
+            {
+                let mut state = shared
+                    .0
+                    .lock()
+                    .expect("status polling state must not be used after a worker panics");
+                state.0 = id;
+                state.1 = true;
+            }
+            let settings = settings
+                .lock()
+                .expect("status polling state must not be used after a worker panics")
+                .clone();
+            let result = match action {
+                Action::Discover(kind) => {
+                    retry.request(kind);
+                    discovery.store(kind as u8, Ordering::Relaxed);
+                    let result = discover(kind);
+                    retry.complete(result.is_ok(), Instant::now());
+                    result
+                }
+                Action::Refresh => Ok(()),
+                _ => execute(&action, settings.as_deref()),
+            };
+            let error = result.err().map(|message| ActionError { action, message });
+            let mut state = shared
+                .0
+                .lock()
+                .expect("status polling state must not be used after a worker panics");
+            state.1 = false;
+            state.2 = error;
+            state.4 = state.4.wrapping_add(1);
+            shared.1.notify_one();
+        }
+    }
+
+    shared
+        .0
+        .lock()
+        .expect("status polling state must not be used after a worker panics")
+        .3 = true;
+    shared.1.notify_one();
+}
+
 impl Service {
     pub fn start(settings: Option<Vec<String>>) -> Self {
         let live_settings = Arc::new(Mutex::new(settings));
@@ -181,6 +278,8 @@ impl Service {
             Condvar::new(),
         ));
         let polling = shared.clone();
+        let discovery = Arc::new(AtomicU8::new(Discovery::None as u8));
+        let interested = discovery.clone();
 
         thread::spawn(move || {
             let mut network =
@@ -240,8 +339,22 @@ impl Service {
                     ..Snapshot::default()
                 };
                 snapshot.audio = audio.read(before);
-                snapshot.network = network.read(before, network::read);
-                snapshot.bluetooth = bluetooth.read(before, bluetooth::read);
+                snapshot.network = network.read(
+                    before,
+                    if interested.load(Ordering::Relaxed) == Discovery::Wifi as u8 {
+                        network::read_available
+                    } else {
+                        network::read
+                    },
+                );
+                snapshot.bluetooth = bluetooth.read(
+                    before,
+                    if interested.load(Ordering::Relaxed) == Discovery::Bluetooth as u8 {
+                        bluetooth::read_available
+                    } else {
+                        bluetooth::read
+                    },
+                );
                 let state = polling
                     .0
                     .lock()
@@ -298,47 +411,10 @@ impl Service {
         });
 
         thread::spawn(move || {
-            while let Ok(first) = commands.recv() {
-                let mut pending = vec![first];
-
-                for command in commands.try_iter() {
-                    pending.retain(|(_, action)| action.key() != command.1.key());
-                    pending.push(command);
-                }
-
-                for (id, action) in pending {
-                    {
-                        let mut state = shared
-                            .0
-                            .lock()
-                            .expect("status polling state must not be used after a worker panics");
-                        state.0 = id;
-                        state.1 = true;
-                    }
-                    let settings = settings
-                        .lock()
-                        .expect("status polling state must not be used after a worker panics")
-                        .clone();
-                    let error = execute(&action, settings.as_deref())
-                        .err()
-                        .map(|message| ActionError { action, message });
-                    let mut state = shared
-                        .0
-                        .lock()
-                        .expect("status polling state must not be used after a worker panics");
-                    state.1 = false;
-                    state.2 = error;
-                    state.4 = state.4.wrapping_add(1);
-                    shared.1.notify_one();
-                }
-            }
-
-            shared
-                .0
-                .lock()
-                .expect("status polling state must not be used after a worker panics")
-                .3 = true;
-            shared.1.notify_one();
+            let mut discovery_session = wireless::DiscoverySession::default();
+            command_worker(commands, settings, shared, discovery, |kind| {
+                discovery_session.set(kind)
+            });
         });
 
         Self {
@@ -346,6 +422,7 @@ impl Service {
             tx,
             updates: Updates(Arc::new(rx)),
             generation: 0,
+            requested_discovery: Discovery::None,
         }
     }
 
@@ -368,6 +445,14 @@ impl Service {
             .settings
             .lock()
             .expect("status polling state must not be used after a worker panics") = settings;
+    }
+
+    pub fn set_discovery(&mut self, discovery: Discovery) -> Result<(), ActionError> {
+        if self.requested_discovery != discovery {
+            self.send(Action::Discover(discovery))?;
+            self.requested_discovery = discovery;
+        }
+        Ok(())
     }
 
     pub fn subscription(&self) -> cosmic::iced::Subscription<Update> {
@@ -693,6 +778,7 @@ pub(super) fn execute_power(action: Action, force: bool) -> Result<(), String> {
 
 fn execute(action: &Action, settings: Option<&[String]>) -> Result<(), String> {
     match action {
+        Action::Discover(_) | Action::Refresh => return Ok(()),
         Action::Wifi(on) => run("nmcli", &["radio", "wifi", if *on { "on" } else { "off" }]),
         Action::Bluetooth(on) => run("bluetoothctl", &["power", if *on { "on" } else { "off" }]),
         Action::Volume(value) => run(
@@ -764,6 +850,21 @@ fn execute(action: &Action, settings: Option<&[String]>) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    impl super::Service {
+        /// UI tests must not dispatch discovery or control commands to host radios.
+        pub(crate) fn disconnected_for_test() -> Self {
+            let (tx, _) = std::sync::mpsc::sync_channel(1);
+            let (_, rx) = tokio::sync::watch::channel(None);
+            Self {
+                settings: Default::default(),
+                tx,
+                updates: super::Updates(std::sync::Arc::new(rx)),
+                generation: 0,
+                requested_discovery: super::Discovery::None,
+            }
+        }
+    }
+
     use super::*;
 
     pub(super) struct TestBus {

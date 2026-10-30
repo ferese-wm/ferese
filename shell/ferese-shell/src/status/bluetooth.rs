@@ -5,6 +5,14 @@ use zbus::fdo::ManagedObjects;
 use super::Bluetooth;
 
 pub(super) fn read(connection: &Connection) -> zbus::Result<Option<Bluetooth>> {
+    read_with_options(connection, false)
+}
+
+pub(super) fn read_available(connection: &Connection) -> zbus::Result<Option<Bluetooth>> {
+    read_with_options(connection, true)
+}
+
+pub(super) fn adapter(connection: &Connection) -> zbus::Result<Option<String>> {
     let objects: ManagedObjects = connection
         .call_method(
             Some("org.bluez"),
@@ -15,6 +23,34 @@ pub(super) fn read(connection: &Connection) -> zbus::Result<Option<Bluetooth>> {
         )?
         .body()
         .deserialize()?;
+    select_adapter(&objects)
+}
+
+fn read_with_options(connection: &Connection, available: bool) -> zbus::Result<Option<Bluetooth>> {
+    let objects: ManagedObjects = connection
+        .call_method(
+            Some("org.bluez"),
+            "/",
+            Some("org.freedesktop.DBus.ObjectManager"),
+            "GetManagedObjects",
+            &(),
+        )?
+        .body()
+        .deserialize()?;
+    let Some(selected) = select_adapter(&objects)? else {
+        return Ok(None);
+    };
+    let mut result = snapshot(&objects, Some(&selected));
+    if available
+        && let Some(result) = &mut result
+        && result.enabled
+    {
+        result.available = Some(super::wireless::bluetooth_devices(&objects, &selected));
+    }
+    Ok(result)
+}
+
+fn select_adapter(objects: &ManagedObjects) -> zbus::Result<Option<String>> {
     let adapters = objects
         .iter()
         .filter_map(|(path, interfaces)| {
@@ -44,11 +80,11 @@ pub(super) fn read(connection: &Connection) -> zbus::Result<Option<Bluetooth>> {
         }) else {
             return Ok(None);
         };
-        Some(path.as_str())
+        Some(path.to_string())
     } else {
-        None
+        adapters.first().map(|(path, _)| path.to_string())
     };
-    Ok(snapshot(&objects, selected))
+    Ok(selected)
 }
 
 fn snapshot(objects: &ManagedObjects, selected: Option<&str>) -> Option<Bluetooth> {
@@ -75,7 +111,11 @@ fn snapshot(objects: &ManagedObjects, selected: Option<&str>) -> Option<Bluetoot
         }
     }
     devices.sort();
-    Some(Bluetooth { enabled, devices })
+    Some(Bluetooth {
+        enabled,
+        devices,
+        ..Default::default()
+    })
 }
 
 #[cfg(test)]
@@ -198,3 +238,7 @@ mod tests {
         assert!(read(&client).unwrap().unwrap().enabled);
     }
 }
+
+#[cfg(test)]
+#[path = "bluetooth_edge_cases.rs"]
+mod edge_cases;

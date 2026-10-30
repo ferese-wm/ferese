@@ -26,4 +26,15 @@ impl Rendering {
     ) -> cosmic::widget::Text<'a, cosmic::Theme, cosmic::Renderer> {
         ferese_theme::text(content, self.font)
     }
+
+    pub fn panel_text<'a>(
+        self,
+        content: impl Into<std::borrow::Cow<'a, str>> + 'a,
+    ) -> cosmic::widget::Text<'a, cosmic::Theme, cosmic::Renderer> {
+        self.text(content)
+            .size(ferese_theme::panel::TEXT_SIZE)
+            .line_height(cosmic::iced::widget::text::LineHeight::Absolute(
+                ferese_theme::panel::TEXT_LINE_HEIGHT.into(),
+            ))
+    }
 }

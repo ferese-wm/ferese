@@ -16,7 +16,7 @@ impl FereseShell {
         Some(motion::button(
             self.render,
             button::custom(crate::bar_content(
-                self.battery_indicator(self.config.theme, opacity, true),
+                self.battery_indicator(self.config.theme, opacity, true, 14.),
                 28.,
             ))
             .name(format!(

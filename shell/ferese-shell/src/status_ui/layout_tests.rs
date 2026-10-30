@@ -25,6 +25,9 @@ fn compact_tiles_keep_distinct_targets_and_unavailable_controls_are_disabled() {
                     ferese_config::theme::preset("ferese-blue-light", Appearance::Light).unwrap();
             }
             app.config.apply_theme(&resolved);
+            if supported {
+                app.config.theme.surface_popover[3] = 160;
+            }
             app.config.theme_mode = Mode::Auto;
             app.config.theme.material_radius = radius;
             app.render = rendering::Rendering::new(&app.config);
@@ -33,10 +36,12 @@ fn compact_tiles_keep_distinct_targets_and_unavailable_controls_are_disabled() {
                     enabled: true,
                     connection: Some("A very long network name".into()),
                     signal: 82,
+                    ..Default::default()
                 }),
                 bluetooth: Some(status::Bluetooth {
                     enabled: true,
                     devices: vec!["Headphones with a very long device name".into()],
+                    ..Default::default()
                 }),
                 brightness: Some(82),
                 audio: Some(status::Audio {
@@ -122,42 +127,83 @@ fn compact_tiles_keep_distinct_targets_and_unavailable_controls_are_disabled() {
                             .is_some_and(|name| name.starts_with(label))
                     })
                     .unwrap_or_else(|| panic!("missing {label}"));
-                let rect = tile.node().bounds().unwrap();
+                let detail_rect = tile.node().bounds().unwrap();
+                let toggle = match label {
+                    "Wi-Fi:" => Some("Turn off Wi-Fi"),
+                    "Bluetooth:" => Some("Turn off Bluetooth"),
+                    _ => None,
+                }
+                .map(|name| {
+                    nodes
+                        .iter()
+                        .find(|node| node.node().label() == Some(name))
+                        .unwrap()
+                        .node()
+                        .bounds()
+                        .unwrap()
+                });
+                let mut rect = detail_rect;
+                if let Some(toggle) = toggle {
+                    rect.x0 = rect.x0.min(toggle.x0);
+                    rect.x1 = rect.x1.max(toggle.x1);
+                    rect.y0 = rect.y0.min(toggle.y0);
+                    rect.y1 = rect.y1.max(toggle.y1);
+                }
                 assert!(rect.x0 >= 0. && rect.x1 <= f64::from(bounds.width));
                 assert!(rect.y0 >= 0. && rect.y1 <= f64::from(bounds.height));
                 assert!(rect.x1 - rect.x0 >= 120. && rect.y1 - rect.y0 >= 44.);
-                let point = Point::new(
-                    ((rect.x0 + rect.x1) / 2.) as f32,
-                    ((rect.y0 + rect.y1) / 2.) as f32,
-                );
                 let mut messages = Vec::new();
-                for event in [
-                    Event::Mouse(mouse::Event::CursorMoved { position: point }),
-                    Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
-                    Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
-                ] {
-                    view.as_widget_mut().update(
-                        &mut tree,
-                        &event,
-                        Layout::new(&node),
-                        mouse::Cursor::Available(point),
-                        &renderer,
-                        &mut clipboard::Null,
-                        &mut Shell::new(&mut messages),
-                        &bounds,
+                let targets = if let Some(toggle) = toggle {
+                    vec![toggle, detail_rect]
+                } else {
+                    vec![rect]
+                };
+                for target in targets {
+                    let point = Point::new(
+                        ((target.x0 + target.x1) / 2.) as f32,
+                        ((target.y0 + target.y1) / 2.) as f32,
                     );
+                    for event in [
+                        Event::Mouse(mouse::Event::CursorMoved { position: point }),
+                        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                        Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                    ] {
+                        view.as_widget_mut().update(
+                            &mut tree,
+                            &event,
+                            Layout::new(&node),
+                            mouse::Cursor::Available(point),
+                            &renderer,
+                            &mut clipboard::Null,
+                            &mut Shell::new(&mut messages),
+                            &bounds,
+                        );
+                    }
                 }
                 let mut actions = Vec::new();
                 let mut modes = Vec::new();
+                let mut panels = Vec::new();
                 for message in messages {
                     match message {
                         cosmic::Action::App(Message::Control(action)) => actions.push(action),
                         cosmic::Action::App(Message::ThemeMode(mode)) => modes.push(mode),
+                        cosmic::Action::App(Message::Connections(
+                            super::connections::Event::ShowPanel(kind),
+                        )) => panels.push(kind),
                         _ => {}
                     }
                 }
                 assert_eq!(actions, action.into_iter().collect::<Vec<_>>(), "{label}");
                 assert_eq!(modes, mode.into_iter().collect::<Vec<_>>(), "{label}");
+                assert_eq!(
+                    panels,
+                    match label {
+                        "Wi-Fi:" => vec![Menu::Network],
+                        "Bluetooth:" => vec![Menu::Bluetooth],
+                        _ => Vec::new(),
+                    },
+                    "{label}"
+                );
                 tile_bounds.push(rect);
             }
             assert_eq!(tile_bounds[0].y0, tile_bounds[1].y0);
@@ -173,7 +219,8 @@ fn compact_tiles_keep_distinct_targets_and_unavailable_controls_are_disabled() {
             );
             assert!(tile_bounds[4].y0 - tile_bounds[2].y1 < horizontal_gap);
 
-            if let Ok(directory) = std::env::var("FERESE_POPOVER_CAPTURE_DIR") {
+            let size = Size::new(bounds.width.ceil() as u32, bounds.height.ceil() as u32);
+            let mut capture = |background| {
                 use cosmic::iced::advanced::Renderer;
                 let theme = cosmic::theme::active();
                 renderer.reset(bounds);
@@ -190,9 +237,22 @@ fn compact_tiles_keep_distinct_targets_and_unavailable_controls_are_disabled() {
                     mouse::Cursor::Unavailable,
                     &bounds,
                 );
-                let size = Size::new(bounds.width.ceil() as u32, bounds.height.ceil() as u32);
-                let pixels =
-                    Headless::screenshot(&mut renderer, size, 1., cosmic::iced::Color::TRANSPARENT);
+                Headless::screenshot(&mut renderer, size, 1., background)
+            };
+            if supported {
+                let red = capture(cosmic::iced::Color::from_rgb(0.7, 0.1, 0.1));
+                let blue = capture(cosmic::iced::Color::from_rgb(0.1, 0.1, 0.7));
+                let x = (tile_bounds[0].x0 + 14.) as u32;
+                let y = (tile_bounds[0].y0 + 24.) as u32;
+                let offset = ((y * size.width + x) * 4) as usize;
+                assert_ne!(
+                    &red[offset..offset + 3],
+                    &blue[offset..offset + 3],
+                    "the icon well must reveal the translucent material beneath it"
+                );
+            }
+            if let Ok(directory) = std::env::var("FERESE_POPOVER_CAPTURE_DIR") {
+                let pixels = capture(cosmic::iced::Color::TRANSPARENT);
                 std::fs::create_dir_all(&directory).unwrap();
                 image_codec::save_buffer(
                     std::path::Path::new(&directory)

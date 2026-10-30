@@ -3,11 +3,9 @@ use cosmic::widget::{button, column, container, row};
 use cosmic::{Element, theme};
 
 use super::controls::level_control;
-use super::{Menu, MenuRows, MenuStyle};
+use super::{MenuRows, MenuStyle};
 use crate::status::Action;
-use crate::{
-    FereseShell, Message, ShellTheme, accented_icon, bar_icon, color_with_opacity, motion,
-};
+use crate::{FereseShell, Message, ShellTheme, bar_icon, color_with_opacity, motion};
 
 pub(super) fn view<'a>(
     shell: &'a FereseShell,
@@ -16,20 +14,19 @@ pub(super) fn view<'a>(
 ) -> MenuRows<'a> {
     let MenuStyle {
         theme,
-        primary,
         muted,
         opacity: p,
+        ..
     } = style;
     if let Some(b) = &shell.status.battery {
         rows = rows.push(
             row![
-                accented_icon(
-                    super::bar::status_icon(Menu::Battery, &shell.status).0,
-                    28,
-                    primary,
-                    color_with_opacity(theme.accent, p)
-                ),
-                shell.render.text(format!("{}%", b.percent)).size(14),
+                shell.render.text("Battery").size(14).width(Length::Fill),
+                shell.battery_indicator(theme, p, false, 12.),
+                shell
+                    .render
+                    .text(format!("{}%", b.percent.min(100)))
+                    .size(13),
             ]
             .spacing(8)
             .align_y(Alignment::Center),
@@ -38,12 +35,12 @@ pub(super) fn view<'a>(
             shell
                 .render
                 .text(match b.status.as_str() {
-                    "Charging" => "Connected to power",
-                    "Discharging" => "Running on battery power",
+                    "Charging" | "Pending charge" => "Connected to power",
+                    "Discharging" | "Pending discharge" => "Running on battery power",
                     "Full" => "Battery fully charged",
                     _ => "Battery status reported by the system",
                 })
-                .size(12)
+                .size(11)
                 .class(theme::Text::Color(muted)),
         );
     }
@@ -127,11 +124,6 @@ pub(super) fn view<'a>(
     }
 
     if shell.status.reboot || shell.status.poweroff || shell.status.suspend {
-        rows = rows.push(ferese_theme::menus::section_label(
-            "Power",
-            shell.render.font,
-            muted,
-        ));
         rows = rows.push(power);
     }
     rows

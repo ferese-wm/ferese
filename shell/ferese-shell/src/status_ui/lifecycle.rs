@@ -169,6 +169,9 @@ impl FereseShell {
     }
 
     pub fn destroy_menu(&mut self) -> Task<Message> {
+        if let Some(menu) = &self.menu {
+            self.clear_connection_input(menu.id);
+        }
         self.night_light_temperature = None;
         let tooltip = self.dismiss_workspace_tooltip();
         crate::EFFECT_FRAME_PENDING.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -194,6 +197,9 @@ impl FereseShell {
     }
 
     pub fn close_menu(&mut self) -> Task<Message> {
+        if let Some(menu) = &self.menu {
+            self.clear_connection_input(menu.id);
+        }
         self.night_light_temperature = None;
         self.refresh_media_art(false);
         let Some(menu) = &mut self.menu else {
@@ -290,6 +296,7 @@ mod tests {
             enabled: true,
             connection: Some("Test network".into()),
             signal: 90,
+            ..Default::default()
         });
         let bar = shell.outputs[0].bar;
         let mut anchor = PopoverAnchor {

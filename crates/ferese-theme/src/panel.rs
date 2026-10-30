@@ -6,6 +6,11 @@ use ferese_panel::layout::{Measurement, Resolution, resolve_with_gap};
 use ferese_panel::{ItemId, Panel, Representation};
 use std::borrow::Cow;
 
+pub const ICON_SIZE: u16 = 16;
+pub const ICON_SLOT_WIDTH: u16 = 20;
+pub const TEXT_SIZE: u16 = 13;
+pub const TEXT_LINE_HEIGHT: f32 = 18.;
+
 /// Group outlines never paint a second fill over the panel background.
 pub fn group_border(
     outline: cosmic::iced::Color,

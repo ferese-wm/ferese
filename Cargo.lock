@@ -2020,6 +2020,7 @@ dependencies = [
  "wayland-client",
  "wayland-server",
  "zbus",
+ "zeroize",
 ]
 
 [[package]]

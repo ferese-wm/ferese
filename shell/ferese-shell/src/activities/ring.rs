@@ -13,6 +13,7 @@ pub(super) fn view<'a>(
     animate: bool,
     reduced: bool,
     color: Color,
+    diameter: f32,
 ) -> Element<'a, cosmic::Action<Message>> {
     Canvas::new(Ring {
         progress,
@@ -20,8 +21,8 @@ pub(super) fn view<'a>(
         reduced,
         color,
     })
-    .width(26)
-    .height(26)
+    .width(diameter)
+    .height(diameter)
     .into()
 }
 struct Ring {
@@ -103,12 +104,14 @@ impl canvas::Program<cosmic::Action<Message>, Theme, cosmic::Renderer> for Ring 
     ) -> Vec<canvas::Geometry<cosmic::Renderer>> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
         let center = Point::new(bounds.width / 2., bounds.height / 2.);
-        let radius = bounds.width.min(bounds.height) / 2. - 3.;
+        let diameter = bounds.width.min(bounds.height);
+        let radius = diameter * (10. / 26.);
+        let stroke = diameter * (1.8 / 26.);
         frame.stroke(
             &canvas::Path::circle(center, radius),
             canvas::Stroke::default()
                 .with_color(self.color.scale_alpha(0.15))
-                .with_width(1.8),
+                .with_width(stroke),
         );
         let (start, fraction) = if self.progress.is_some() {
             (
@@ -141,7 +144,7 @@ impl canvas::Program<cosmic::Action<Message>, Theme, cosmic::Renderer> for Ring 
                 &arc,
                 canvas::Stroke::default()
                     .with_color(self.color)
-                    .with_width(1.8)
+                    .with_width(stroke)
                     .with_line_cap(canvas::LineCap::Round),
             );
         }

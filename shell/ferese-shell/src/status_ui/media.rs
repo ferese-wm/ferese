@@ -89,7 +89,7 @@ pub(super) fn bar<'a>(
     let vertical_padding =
         ((metrics.group_item_height - f32::from(metrics.icon_size)) * 0.5).clamp(0.0, 2.0);
     let height = metrics.group_item_height - 2.0 * vertical_padding;
-    let side = height.min(24.0);
+    let side = f32::from(metrics.icon_size).min(height);
     let cover: Element<'_, cosmic::Action<Message>> = match shell
         .media
         .artwork
@@ -116,8 +116,7 @@ pub(super) fn bar<'a>(
     };
     let label = shell
         .render
-        .text(player.label())
-        .size(metrics.text_size)
+        .panel_text(player.label())
         .wrapping(cosmic::iced::widget::text::Wrapping::None)
         .ellipsize(cosmic::iced::widget::text::Ellipsize::End(
             cosmic::iced::advanced::text::EllipsizeHeightLimit::Lines(1),
@@ -132,7 +131,7 @@ pub(super) fn bar<'a>(
     // share the allocation with the label.
     let chrome = 4.
         + 2.
-        + f32::from(metrics.icon_size.max(20))
+        + f32::from(metrics.icon_slot_width)
         + 12.
         + 8.
         + if compact { 0. } else { side + 8. };
@@ -177,7 +176,7 @@ pub(super) fn bar<'a>(
             ),
             height,
         )
-        .width(20)
+        .width(metrics.icon_slot_width)
         .align_x(cosmic::iced::alignment::Horizontal::Center),
     )
     .name(if playing { "Pause" } else { "Play" })

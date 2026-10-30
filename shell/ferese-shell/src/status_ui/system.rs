@@ -31,8 +31,16 @@ pub(super) fn view<'a>(
         ));
     }
     let mut tiles = Vec::with_capacity(6);
+    let tile_icon = |source, enabled| {
+        bar_icon(
+            source,
+            18,
+            if enabled { style.primary } else { style.muted },
+        )
+        .into()
+    };
     if let Some(network) = &shell.status.network {
-        tiles.push(quick_tile(
+        tiles.push(connection_tile(
             shell,
             "Wi-Fi",
             if !network.enabled {
@@ -42,14 +50,14 @@ pub(super) fn view<'a>(
             } else {
                 "Not connected"
             },
-            status_icon(Menu::Network, &shell.status).0,
-            network.enabled,
-            Some(Message::Control(Action::Wifi(!network.enabled))),
+            tile_icon(status_icon(Menu::Network, &shell.status).0, network.enabled),
+            Action::Wifi(!network.enabled),
+            Menu::Network,
             style,
         ));
     }
     if let Some(bluetooth) = &shell.status.bluetooth {
-        tiles.push(quick_tile(
+        tiles.push(connection_tile(
             shell,
             "Bluetooth",
             if !bluetooth.enabled {
@@ -61,9 +69,12 @@ pub(super) fn view<'a>(
                     .map(String::as_str)
                     .unwrap_or("On")
             },
-            status_icon(Menu::Bluetooth, &shell.status).0,
-            bluetooth.enabled,
-            Some(Message::Control(Action::Bluetooth(!bluetooth.enabled))),
+            tile_icon(
+                status_icon(Menu::Bluetooth, &shell.status).0,
+                bluetooth.enabled,
+            ),
+            Action::Bluetooth(!bluetooth.enabled),
+            Menu::Bluetooth,
             style,
         ));
     }
@@ -80,7 +91,7 @@ pub(super) fn view<'a>(
         } else {
             "Off"
         },
-        ferese_theme::icons::NIGHT_LIGHT,
+        tile_icon(ferese_theme::icons::NIGHT_LIGHT, supported && enabled),
         supported && enabled,
         supported.then_some(Message::Control(Action::NightLight(!enabled))),
         style,
@@ -90,7 +101,7 @@ pub(super) fn view<'a>(
             shell,
             "Do Not Disturb",
             if notifications.dnd { "On" } else { "Off" },
-            ferese_theme::icons::DND,
+            tile_icon(ferese_theme::icons::DND, notifications.dnd),
             notifications.dnd,
             Some(Message::Control(Action::Dnd(!notifications.dnd))),
             style,
@@ -101,7 +112,7 @@ pub(super) fn view<'a>(
         shell,
         "Dark Mode",
         if dark { "On" } else { "Off" },
-        ferese_theme::icons::APPEARANCE,
+        tile_icon(ferese_theme::icons::APPEARANCE, dark),
         dark,
         Some(Message::ThemeMode(if dark {
             Mode::Light
@@ -123,8 +134,8 @@ pub(super) fn view<'a>(
                     ""
                 }
             ),
-            status_icon(Menu::Battery, &shell.status).0,
-            matches!(battery.status.as_str(), "Charging" | "Pending charge"),
+            shell.battery_indicator(style.theme, style.opacity, false, 12.),
+            true,
             None,
             style,
         ));
@@ -142,39 +153,30 @@ pub(super) fn view<'a>(
     audio::view(shell, rows, style, true)
 }
 
-fn quick_tile<'a>(
-    shell: &'a FereseShell,
-    label: &'static str,
-    detail: impl Into<std::borrow::Cow<'a, str>>,
-    source: &'static [u8],
-    enabled: bool,
-    action: Option<Message>,
+fn icon_well<'a>(
+    shell: &FereseShell,
+    icon: Element<'a, cosmic::Action<Message>>,
     style: MenuStyle,
 ) -> Element<'a, cosmic::Action<Message>> {
-    let render = shell.render;
-    let foreground = if enabled { style.primary } else { style.muted };
-    let icon_fill = ferese_theme::mix(
-        color(style.theme.surface_base),
-        color(style.theme.accent),
-        if enabled { 0.12 } else { 0.0 },
-    )
-    .scale_alpha(style.opacity);
-    let icon_color = if enabled {
-        ferese_theme::foreground(icon_fill, color(style.theme.accent)).scale_alpha(style.opacity)
-    } else {
-        foreground
-    };
-    let icon = container(bar_icon(source, 18, icon_color))
+    container(icon)
         .center_x(28)
         .center_y(28)
         .class(ferese_theme::controls::surface(
-            icon_fill,
-            render.radius(8.),
-        ));
-    let detail = detail.into();
-    let name = format!("{label}: {detail}");
+            color(style.theme.surface_base).scale_alpha(0.25 * style.opacity),
+            shell.render.radius(8.),
+        ))
+        .into()
+}
+
+fn tile_text<'a>(
+    shell: &FereseShell,
+    label: &'static str,
+    detail: std::borrow::Cow<'a, str>,
+    style: MenuStyle,
+) -> Element<'a, cosmic::Action<Message>> {
     let text = |label: std::borrow::Cow<'a, str>, size: f32, foreground| {
-        render
+        shell
+            .render
             .text(label)
             .size(size)
             .line_height(cosmic::iced::widget::text::LineHeight::Absolute(
@@ -187,23 +189,99 @@ fn quick_tile<'a>(
             ))
             .class(theme::Text::Color(foreground))
     };
-    let content = row![
-        icon,
-        column![
-            text(label.into(), 12., style.primary),
-            text(detail, 11., style.muted)
-        ]
-        .spacing(0)
-        .width(Length::Fill),
+    column![
+        text(label.into(), 12., style.primary),
+        text(detail, 11., style.muted)
     ]
-    .spacing(8)
-    .align_y(Alignment::Center);
+    .spacing(0)
+    .width(Length::Fill)
+    .into()
+}
+
+fn connection_tile<'a>(
+    shell: &'a FereseShell,
+    label: &'static str,
+    detail: impl Into<std::borrow::Cow<'a, str>>,
+    icon: Element<'a, cosmic::Action<Message>>,
+    action: Action,
+    kind: Menu,
+    style: MenuStyle,
+) -> Element<'a, cosmic::Action<Message>> {
+    let detail = detail.into();
+    let name = format!("{label}: {detail}");
+    let appearance = || {
+        ferese_theme::controls::notification_button(
+            style.primary,
+            style.primary.scale_alpha(0.04 * style.opacity),
+            shell.render.radius(10.),
+            false,
+        )
+    };
+    let toggle = button::custom(icon_well(shell, icon, style))
+        .id(cosmic::widget::Id::new(format!("radio:{label}:{action:?}")))
+        .padding([10, 6, 10, 10])
+        .name(format!(
+            "Turn {} {label}",
+            if matches!(action, Action::Wifi(true) | Action::Bluetooth(true)) {
+                "on"
+            } else {
+                "off"
+            }
+        ))
+        .class(appearance())
+        .on_press(cosmic::Action::App(Message::Control(action)));
+    let details = button::custom(
+        row![
+            tile_text(shell, label, detail, style),
+            bar_icon(ferese_theme::icons::CHEVRON_DOWN, 8, style.muted)
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center),
+    )
+    .id(cosmic::widget::Id::new(format!("details:{label}")))
+    .padding([10, 10, 10, 2])
+    .height(48)
+    .width(Length::Fill)
+    .name(name)
+    .class(appearance())
+    .on_press(cosmic::Action::App(Message::Connections(
+        super::connections::Event::ShowPanel(kind),
+    )));
+    control_card(
+        shell.render,
+        row![toggle, details].align_y(Alignment::Center).into(),
+        style.primary,
+        style.opacity,
+    )
+    .padding(0)
+    .width(Length::FillPortion(1))
+    .into()
+}
+
+fn quick_tile<'a>(
+    shell: &'a FereseShell,
+    label: &'static str,
+    detail: impl Into<std::borrow::Cow<'a, str>>,
+    icon: Element<'a, cosmic::Action<Message>>,
+    enabled: bool,
+    action: Option<Message>,
+    style: MenuStyle,
+) -> Element<'a, cosmic::Action<Message>> {
+    let render = shell.render;
+    let foreground = if enabled { style.primary } else { style.muted };
+    let icon = icon_well(shell, icon, style);
+    let detail = detail.into();
+    let name = format!("{label}: {detail}");
+    let content = row![icon, tile_text(shell, label, detail, style),]
+        .spacing(8)
+        .align_y(Alignment::Center);
     let mut button = button::custom(control_card(
         render,
         content.into(),
         style.primary,
         style.opacity,
     ))
+    .id(cosmic::widget::Id::new(format!("quick:{label}:{enabled}")))
     .width(Length::FillPortion(1))
     .padding(0)
     .name(name);
