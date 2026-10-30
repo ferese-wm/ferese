@@ -196,6 +196,15 @@ impl PhysicalInput {
         self.gestures[kind as usize] = id;
     }
 
+    pub(crate) fn is_neutral(&self) -> bool {
+        self.gestures.iter().all(Option::is_none)
+            && self.entries.iter().all(|entry| {
+                entry.held.keys.is_empty()
+                    && entry.held.buttons.is_empty()
+                    && entry.held.contacts.is_empty()
+            })
+    }
+
     pub(super) fn take_all(&mut self) -> Vec<Held> {
         self.entries
             .iter_mut()

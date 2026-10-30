@@ -11,6 +11,7 @@ mod crtc_assignment;
 mod diagnostics;
 pub(crate) mod feedback;
 pub(crate) mod gamma;
+mod input_resume;
 pub(crate) mod leasing;
 mod lid;
 mod lid_policy;
@@ -93,7 +94,11 @@ pub struct DirectBackendState {
     confirmation_lid: bool,
     pub(crate) low_power: bool,
     devices: HashMap<DrmNode, DirectDevice>,
+    input_context: Libinput,
+    input_open_failures: input_resume::OpenFailures,
+    input_sleep_offset: Option<input_resume::SleepOffset>,
     input_devices: Vec<LibinputDevice>,
+    input_retry: Option<RegistrationToken>,
     presentation: HashMap<(DrmNode, crtc::Handle), PresentationClock>,
     pub(crate) connected_outputs: Vec<ConnectedOutputInfo>,
     battery_timer: Option<RegistrationToken>,
@@ -424,8 +429,11 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                 .map(|(_, path)| path.to_owned())
         })
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no DRM device found"))?;
-    let mut libinput_context =
-        Libinput::new_with_udev::<LibinputSessionInterface<LibSeatSession>>(session.clone().into());
+    let input_open_failures = input_resume::OpenFailures::default();
+    let mut libinput_context = Libinput::new_with_udev(input_resume::Access {
+        inner: LibinputSessionInterface::<LibSeatSession>::from(session.clone()),
+        failures: input_open_failures.clone(),
+    });
     libinput_context
         .udev_assign_seat(&seat_name)
         .map_err(|()| io::Error::other(format!("failed to assign libinput seat {seat_name}")))?;
@@ -455,7 +463,11 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
         confirmation_lid: false,
         low_power: super::power::low_power(false, super::power::battery_percent()),
         devices: HashMap::new(),
+        input_context: libinput_context,
+        input_open_failures,
+        input_sleep_offset: input_resume::SleepOffset::sample(),
         input_devices: Vec::new(),
+        input_retry: None,
         presentation: HashMap::new(),
         connected_outputs: Vec::new(),
         battery_timer: None,
@@ -478,33 +490,8 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
 
     event_loop
         .handle()
-        .insert_source(libinput_backend, |event, _, state| match event {
-            InputEvent::DeviceAdded { mut device } => {
-                state.add_input_device(device.clone());
-                configure_libinput_device(state, &mut device);
-                if let Some(backend) = state.direct_backend.as_mut() {
-                    backend.input_devices.push(device);
-                }
-            }
-
-            InputEvent::DeviceRemoved { device } => {
-                state.remove_input_device(&device);
-                if let Some(backend) = state.direct_backend.as_mut() {
-                    backend
-                        .input_devices
-                        .retain(|candidate| candidate != &device);
-                }
-            }
-
-            event => {
-                if state
-                    .direct_backend
-                    .as_ref()
-                    .is_some_and(|backend| backend.active)
-                {
-                    state.process_input_event(event);
-                }
-            }
+        .insert_source(libinput_backend, |event, _, state| {
+            process_libinput_event(state, event);
         })?;
     event_loop
         .handle()
@@ -514,6 +501,10 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                 let handle = state.loop_handle.clone();
                 if let Some(backend) = state.direct_backend.as_mut() {
                     backend.active = false;
+                    if let Some(token) = backend.input_retry.take() {
+                        handle.remove(token);
+                    }
+                    backend.input_context.suspend();
                     leasing::suspend(backend);
                     backend.lid.pause();
                     backend.lid_reader.set_active(false);
@@ -555,18 +546,20 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
                 state.display_presentation.clear();
                 state.refresh_idle_inhibition();
 
-                libinput_context.suspend();
                 tracing::info!("direct session paused");
             }
 
             SessionEvent::ActivateSession => {
-                if libinput_context.resume().is_err() {
-                    tracing::error!("failed to resume libinput");
-                }
-
+                let reopen_input = state
+                    .direct_backend
+                    .as_ref()
+                    .is_some_and(|backend| !backend.active);
                 if let Some(backend) = state.direct_backend.as_mut() {
                     backend.active = true;
                     backend.lid_reader.set_active(true);
+                }
+                if reopen_input {
+                    input_resume::resume(state);
                 }
 
                 let seat = state.seat.clone();
@@ -592,6 +585,35 @@ pub fn init(event_loop: &mut EventLoop<Ferese>, state: &mut Ferese) -> Result<()
 
     tracing::info!(seat = %seat_name, "initialized direct session input and device discovery");
     Ok(())
+}
+
+fn process_libinput_event(state: &mut Ferese, event: InputEvent<LibinputInputBackend>) {
+    match event {
+        InputEvent::DeviceAdded { mut device } => {
+            state.add_input_device(device.clone());
+            configure_libinput_device(state, &mut device);
+            if let Some(backend) = state.direct_backend.as_mut() {
+                backend.input_devices.push(device);
+            }
+        }
+        InputEvent::DeviceRemoved { device } => {
+            state.remove_input_device(&device);
+            if let Some(backend) = state.direct_backend.as_mut() {
+                backend
+                    .input_devices
+                    .retain(|candidate| candidate != &device);
+            }
+        }
+        event => {
+            if state
+                .direct_backend
+                .as_ref()
+                .is_some_and(|backend| backend.active)
+            {
+                state.process_input_event(event);
+            }
+        }
+    }
 }
 
 fn configure_libinput_device(state: &Ferese, device: &mut LibinputDevice) {
@@ -1605,6 +1627,7 @@ pub(crate) fn set_lid_closed(state: &mut Ferese, closed: bool) {
 }
 
 pub(crate) fn system_resumed(state: &mut Ferese) {
+    input_resume::refresh(state);
     if state
         .direct_backend
         .as_ref()
@@ -1617,6 +1640,7 @@ pub(crate) fn system_resumed(state: &mut Ferese) {
 }
 
 pub(crate) fn reconcile_after_monitor_recovery(state: &mut Ferese) {
+    input_resume::reconcile(state);
     lid::request_reconcile(state);
 }
 

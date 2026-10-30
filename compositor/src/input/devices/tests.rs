@@ -24,6 +24,34 @@ impl Device for TestDevice {
 }
 
 #[test]
+fn neutral_input_requires_released_keys_buttons_contacts_and_gestures() {
+    let mut devices = PhysicalInput::default();
+    let id = devices.add(TestDevice(1));
+    assert!(devices.is_neutral());
+    let key = Keycode::new(42);
+    devices.key(id, key, KeyState::Pressed);
+    assert!(!devices.is_neutral());
+    devices.key(id, key, KeyState::Released);
+    assert!(devices.is_neutral());
+    devices.button(id, 0x110, ButtonState::Pressed);
+    assert!(!devices.is_neutral());
+    devices.button(id, 0x110, ButtonState::Released);
+    assert!(devices.is_neutral());
+    devices
+        .begin_contact(id, Some(0).into(), (1., 1.).into())
+        .unwrap();
+    assert!(!devices.is_neutral());
+    devices.end_contact(id, Some(0).into()).unwrap();
+    assert!(devices.is_neutral());
+    for kind in [Gesture::Swipe, Gesture::Pinch, Gesture::Hold] {
+        devices.set_gesture_owner(kind, Some(id));
+        assert!(!devices.is_neutral());
+        devices.set_gesture_owner(kind, None);
+        assert!(devices.is_neutral());
+    }
+}
+
+#[test]
 fn replaced_handles_do_not_reuse_keyboard_source_or_accept_stale_events() {
     let mut devices = PhysicalInput::default();
     let old = devices.add(TestDevice(1));
