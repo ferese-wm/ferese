@@ -39,8 +39,8 @@ impl Palette {
             a: 1.,
             ..color(&bar.background)
         };
-        let text = crate::foreground(background, color(&bar.text_primary));
-        let muted = crate::foreground(background, color(&bar.text_muted));
+        let text = readable_text(background, color(&bar.text_primary));
+        let muted = readable_text(background, color(&bar.text_muted));
         let border = crate::composite(color(&colors.border), background);
         let accent = crate::composite(color(&colors.accent), background);
         // Urgency remains a semantic warning, independent of the selected accent.
@@ -56,11 +56,24 @@ impl Palette {
             muted,
             divider: border,
             accent,
-            on_accent: crate::foreground(accent, color(&colors.on_accent)),
+            on_accent: readable_text(accent, color(&colors.on_accent)),
             urgent,
-            on_urgent: crate::foreground(urgent, text),
+            on_urgent: readable_text(urgent, text),
         }
     }
+}
+
+// Preserve readable theme colors; otherwise move toward a readable shade only
+// as far as needed, using the same gradual correction as the theme resolver.
+fn readable_text(background: Color, preferred: Color) -> Color {
+    let preferred = crate::composite(preferred, background);
+    if crate::contrast(background, preferred) >= 4.5 {
+        return preferred;
+    }
+    let rgba = |color: Color| [color.r, color.g, color.b, color.a].map(f64::from);
+    let channels = ferese_theme_model::readable(rgba(preferred), rgba(background), 4.5)
+        .map(|channel| (channel * 255.).round() as u8);
+    Color::from_rgb8(channels[0], channels[1], channels[2])
 }
 
 #[derive(Clone, Debug)]
@@ -450,6 +463,48 @@ mod tests {
         assert_eq!(palette.on_accent, Color::from_rgb8(16, 32, 48));
         assert_eq!(palette.border, Color::from_rgb8(34, 51, 68));
         assert_eq!(palette.divider, palette.border);
+    }
+
+    #[test]
+    fn insufficient_text_contrast_keeps_the_theme_tint_instead_of_using_white() {
+        let mut theme = ferese_config::theme::default_theme();
+        theme.tokens.surface.bar.background = "#101820".into();
+        theme.tokens.surface.bar.text_primary = "#D8D8DC".into();
+        theme.tokens.surface.bar.text_muted = "#404858".into();
+        theme.tokens.colors.accent = "#202830".into();
+        theme.tokens.colors.on_accent = "#404858".into();
+        let palette = Palette::from_resolved(&theme);
+        assert_eq!(palette.text, Color::from_rgb8(216, 216, 220));
+        for (background, foreground) in [
+            (palette.background, palette.muted),
+            (palette.accent, palette.on_accent),
+        ] {
+            assert_ne!(
+                foreground,
+                Color::WHITE,
+                "contrast correction must not jump to white"
+            );
+            assert!(
+                foreground.b > foreground.r,
+                "preserve the theme's cool tint"
+            );
+            assert!(crate::contrast(background, foreground) >= 4.5);
+        }
+        assert!(crate::luminance(palette.muted) < crate::luminance(palette.text));
+    }
+
+    #[test]
+    fn light_theme_fallback_stays_tinted_and_readable_colors_are_unchanged() {
+        let mut theme = ferese_config::theme::default_theme();
+        theme.appearance = Appearance::Light;
+        theme.tokens.surface.bar.background = "#F0F0F4".into();
+        theme.tokens.surface.bar.text_primary = "#202838".into();
+        theme.tokens.surface.bar.text_muted = "#C0C8D8".into();
+        let palette = Palette::from_resolved(&theme);
+        assert_eq!(palette.text, Color::from_rgb8(32, 40, 56));
+        assert_ne!(palette.muted, Color::BLACK);
+        assert!(palette.muted.b > palette.muted.r);
+        assert!(crate::contrast(palette.background, palette.muted) >= 4.5);
     }
 
     #[test]
