@@ -13,26 +13,33 @@ const SECOND: i128 = 1_000_000_000;
 const MINUTE: i128 = 60 * SECOND;
 const UNNAMED_ZONE: &str = "ferese/unnamed-system-zone";
 
-pub fn current_time() -> String {
-    labels(Timestamp::now(), &zones().0)
+pub fn current_time_for(compact: bool) -> String {
+    let now = Timestamp::now();
+    let zone = zones().0;
+    if compact {
+        compact_labels(now, &zone)
+    } else {
+        labels(now, &zone)
+    }
 }
 
-pub fn subscription(visible: bool) -> Subscription<String> {
+pub fn subscription(visible: bool, compact: bool) -> Subscription<String> {
     if visible {
-        Subscription::run_with((), stream)
+        Subscription::run_with(compact, stream)
     } else {
         Subscription::none()
     }
 }
 
-fn stream(_: &()) -> impl futures::Stream<Item = String> + use<> {
+fn stream(compact: &bool) -> impl futures::Stream<Item = String> + use<> {
+    let compact = *compact;
     let (send, receive) = tokio::sync::mpsc::channel(1);
     let stop = match UnixStream::pair() {
         Ok((stop, cancel)) => {
             match std::thread::Builder::new()
                 .name("ferese-clock".into())
                 .spawn(move || {
-                    if let Err(error) = watch(send, cancel) {
+                    if let Err(error) = watch(send, cancel, compact) {
                         eprintln!("ferese-shell: clock subscription: {error}");
                     }
                 }) {
@@ -54,7 +61,11 @@ fn stream(_: &()) -> impl futures::Stream<Item = String> + use<> {
     })
 }
 
-fn watch(send: tokio::sync::mpsc::Sender<String>, cancel: UnixStream) -> io::Result<()> {
+fn watch(
+    send: tokio::sync::mpsc::Sender<String>,
+    cancel: UnixStream,
+    compact: bool,
+) -> io::Result<()> {
     // SAFETY: timerfd_create takes scalar arguments; owned_fd adopts its result only after
     // checking success.
     let timer = owned_fd(unsafe {
@@ -65,7 +76,11 @@ fn watch(send: tokio::sync::mpsc::Sender<String>, cancel: UnixStream) -> io::Res
     let mut previous = None;
     loop {
         let now = Timestamp::now();
-        let labels = labels(now, &system);
+        let labels = if compact {
+            compact_labels(now, &system)
+        } else {
+            labels(now, &system)
+        };
         if previous.as_ref() != Some(&labels) {
             previous = Some(labels.clone());
             if send.blocking_send(labels).is_err() {
@@ -228,6 +243,12 @@ fn file_zone(path: &Path, paths: &mut Vec<PathBuf>) -> Option<TimeZone> {
     Some(zone)
 }
 
+fn compact_labels(now: Timestamp, system: &TimeZone) -> String {
+    now.to_zoned(system.clone())
+        .strftime("%a %d %b %H:%M")
+        .to_string()
+}
+
 fn labels(now: Timestamp, system: &TimeZone) -> String {
     ferese_theme::calendar::format_bar_time(&now.to_zoned(system.clone()))
 }
@@ -343,9 +364,18 @@ mod tests {
     use super::*;
     use std::time::Duration;
     #[test]
+    fn text_clock_uses_local_24_hour_time_and_handles_midnight() {
+        let zone = TimeZone::get("Africa/Lagos").unwrap();
+        let now: Timestamp = "2026-10-30T23:07:00Z".parse().unwrap();
+        assert_eq!(compact_labels(now, &zone), "Sat 31 Oct 00:07");
+        assert_eq!(subscription(false, true).units(), 0);
+        assert_eq!(subscription(true, true).units(), 1);
+    }
+
+    #[test]
     fn panel_subscription_stops_when_all_panels_are_hidden() {
-        assert_eq!(subscription(false).units(), 0);
-        assert_eq!(subscription(true).units(), 1);
+        assert_eq!(subscription(false, false).units(), 0);
+        assert_eq!(subscription(true, false).units(), 1);
     }
 
     #[test]
@@ -480,7 +510,7 @@ mod tests {
         let (send, mut receive) = tokio::sync::mpsc::channel(1);
         let (done_send, done_receive) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            done_send.send(watch(send, cancel)).unwrap();
+            done_send.send(watch(send, cancel, false)).unwrap();
         });
         assert!(receive.blocking_recv().is_some());
         drop(stop);

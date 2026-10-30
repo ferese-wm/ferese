@@ -118,6 +118,36 @@ impl App {
     }
 
     fn panel_preview_frame(&self, panel: Panel) -> Element<'_, Message> {
+        if panel.presentation == ferese_panel::Presentation::Text {
+            use ferese_theme::text_bar::{self, Model, Palette, Workspace};
+            return text_bar::view(
+                Model {
+                    workspaces: (1..=4)
+                        .map(|index| Workspace {
+                            index,
+                            id: None,
+                            active: index == 2,
+                            occupied: index == 1 || index == 3,
+                            urgent: index == 4,
+                        })
+                        .collect(),
+                    layout: "scroll".into(),
+                    title: "ferese ~ cargo watch -x check".into(),
+                    cpu: Some("cpu 12%".into()),
+                    network: Some("wifi 85%".into()),
+                    throughput: Some("rx 24KiB/s tx 8KiB/s".into()),
+                    disk: Some("disk 64%".into()),
+                    volume: Some("vol 40%".into()),
+                    battery: Some("bat 82%".into()),
+                    clock: "Fri 30 Oct 14:07".into(),
+                    capture: Vec::new(),
+                    interactive: false,
+                },
+                self.font,
+                Palette::new(self.resolved.presented.appearance),
+                |_, _| Message::PanelEdit(crate::panel_edit::Action::SetTextBar(true)),
+            );
+        }
         if panel.style == ferese_panel::PanelStyle::Morph {
             let palette = visuals::Palette::from_resolved(&self.resolved.presented);
             let height = panel.resolved_geometry().height;

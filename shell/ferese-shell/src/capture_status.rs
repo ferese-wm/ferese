@@ -119,6 +119,9 @@ fn app_name(app: &str) -> String {
 }
 
 fn configured(panel: &ferese_panel::Panel) -> bool {
+    if panel.presentation == ferese_panel::Presentation::Text {
+        return true;
+    }
     [&panel.start, &panel.center, &panel.end]
         .into_iter()
         .flat_map(|zone| &zone.groups)
@@ -186,6 +189,9 @@ impl crate::FereseShell {
                     return true;
                 }
                 let panel = self.panel_for_bar(output.bar);
+                if panel.presentation == ferese_panel::Presentation::Text {
+                    return true;
+                }
                 if !configured(panel) {
                     return false;
                 }
@@ -314,6 +320,24 @@ mod tests {
             .find(|item| item.kind == ItemKind::CaptureStatus)
             .unwrap();
         item.visible = false;
+        assert!(!shell.capture_item_enabled());
+        assert!(!shell.capture_timer_visible());
+    }
+
+    #[test]
+    fn text_capture_does_not_depend_on_saved_standard_items() {
+        let mut shell = crate::tests::shell_with_measured_panel();
+        shell.config.panels[0].presentation = ferese_panel::Presentation::Text;
+        shell.config.panels[0].start.groups.clear();
+        shell.config.panels[0].center.groups.clear();
+        shell.config.panels[0].end.groups.clear();
+        assert!(shell.capture_item_enabled());
+        assert!(shell.capture_item_visible(shell.outputs[0].bar));
+        assert!(shell.capture_timer_visible());
+        shell.outputs[0].hidden = true;
+        assert!(!shell.capture_timer_visible());
+        shell.outputs[0].hidden = false;
+        shell.config.panels[0].presentation = ferese_panel::Presentation::Standard;
         assert!(!shell.capture_item_enabled());
         assert!(!shell.capture_timer_visible());
     }

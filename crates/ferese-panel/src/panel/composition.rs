@@ -415,10 +415,27 @@ pub struct Zone {
     pub spacing: f32,
 }
 
+/// Content presentation is independent of the saved standard panel composition.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Presentation {
+    #[default]
+    Standard,
+    Text,
+}
+
+impl Presentation {
+    fn is_standard(&self) -> bool {
+        *self == Self::Standard
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Panel {
     pub id: PanelId,
+    #[serde(default, skip_serializing_if = "Presentation::is_standard")]
+    pub presentation: Presentation,
     #[serde(default)]
     pub edge: Edge,
     #[serde(default)]
@@ -473,6 +490,9 @@ pub fn validate(panels: &[Panel]) -> Result<(), String> {
                 "panel style {} is not available yet",
                 panel.style.key()
             ));
+        }
+        if panel.presentation == Presentation::Text && panel.style != PanelStyle::Flat {
+            return Err("the text bar uses the flat panel style".into());
         }
         panel.geometry.validate()?;
         panel.morph.validate()?;
@@ -596,6 +616,13 @@ impl Panel {
 
     #[must_use]
     pub fn resolved_geometry(&self) -> PanelGeometry {
+        if self.presentation == Presentation::Text {
+            return PanelGeometry {
+                height: 24.,
+                inner_padding: 0.,
+                ..PanelGeometry::default()
+            };
+        }
         let mut geometry = self.geometry.resolve(self.style);
         if self.style == PanelStyle::Morph && self.morph.attached {
             geometry.edge_margin = 0;
@@ -639,6 +666,7 @@ impl Panel {
         };
         self.id == other.id
             && self.edge == other.edge
+            && self.presentation == other.presentation
             && self.style == other.style
             && self.morph == other.morph
             && same_zone(&self.start, &other.start)
@@ -746,6 +774,7 @@ impl Panel {
 
         Self {
             id: PanelId("main".into()),
+            presentation: Presentation::Standard,
             edge: Edge::Top,
             geometry: GeometryIntent::default(),
             style: preset,
@@ -776,6 +805,25 @@ impl Panel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_bar_reserves_24_pixels_and_preserves_standard_geometry() {
+        let mut panel = Panel::default();
+        panel.geometry.height = Some(54.);
+        panel.geometry.window_clearance = Some(7);
+        panel.presentation = Presentation::Text;
+        assert_eq!(panel.exclusive_zone(false), 24);
+        assert_eq!(panel.exclusive_zone(true), 0);
+        assert_eq!(panel.resolved_geometry().inner_padding, 0.);
+        let restored: Panel =
+            serde_json::from_value(serde_json::to_value(&panel).unwrap()).unwrap();
+        assert_eq!(restored.presentation, Presentation::Text);
+        panel.presentation = Presentation::Standard;
+        assert_eq!(panel.exclusive_zone(false), 61);
+        panel.presentation = Presentation::Text;
+        panel.style = PanelStyle::Morph;
+        assert!(validate(&[panel]).is_err());
+    }
 
     #[test]
     fn fullscreen_releases_the_entire_reservation_without_discarding_pins() {

@@ -27,6 +27,7 @@ impl std::fmt::Display for Destination {
 #[derive(Clone, Debug)]
 pub(super) enum Action {
     ApplyPreset(ferese_panel::PanelStyle),
+    SetTextBar(bool),
     ResetShape,
     ClearGeometry(String),
     SetEdge(ferese_panel::Edge),
@@ -191,7 +192,20 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
     let earlier = matches!(&action, Action::Earlier(_));
     let earlier_group = matches!(&action, Action::EarlierGroup(_));
     let edits = match action {
-        Action::ApplyPreset(style) => vec![set("panels.0.style", style.key())],
+        Action::ApplyPreset(style) => vec![
+            set("panels.0.style", style.key()),
+            set("panels.0.presentation", "standard"),
+        ],
+        Action::SetTextBar(enabled) => {
+            let mut edits = vec![set(
+                "panels.0.presentation",
+                if enabled { "text" } else { "standard" },
+            )];
+            if enabled {
+                edits.push(set("panels.0.style", "flat"));
+            }
+            edits
+        }
         Action::ResetShape => vec![
             Edit::Unset("panels.0.geometry".into()),
             Edit::Unset("panels.0.corner_radius".into()),
@@ -468,6 +482,29 @@ pub(super) fn plan(snapshot: &Snapshot, action: Action) -> Result<Vec<Edit>, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_presentation_preserves_items_pins_and_can_be_disabled() {
+        let mut snapshot = snapshot();
+        let before = snapshot.item("panels.0.start").cloned();
+        apply(
+            &mut snapshot,
+            Action::SetGeometry("height".into(), 48.into()),
+        );
+        apply(&mut snapshot, Action::SetTextBar(true));
+        assert_eq!(snapshot.string("panels.0.presentation", ""), "text");
+        assert_eq!(snapshot.item("panels.0.start").cloned(), before);
+        assert_eq!(snapshot.number("panels.0.geometry.height", 0.), 48.);
+        apply(&mut snapshot, Action::SetTextBar(false));
+        assert_eq!(snapshot.string("panels.0.presentation", ""), "standard");
+        assert_eq!(snapshot.item("panels.0.start").cloned(), before);
+        apply(&mut snapshot, Action::SetTextBar(true));
+        apply(
+            &mut snapshot,
+            Action::ApplyPreset(ferese_panel::PanelStyle::Morph),
+        );
+        assert_eq!(snapshot.string("panels.0.presentation", ""), "standard");
+    }
 
     #[test]
     fn first_geometry_edit_materializes_the_panel_atomically() {

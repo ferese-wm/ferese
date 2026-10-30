@@ -9,6 +9,7 @@ use ferese_panel::{GroupSurface, PanelSurface};
 
 use ferese_theme::panel as adaptive;
 pub(super) mod presentation;
+mod text;
 use crate::panel::Representation;
 use crate::panel_layout::Placement;
 
@@ -83,6 +84,9 @@ impl FereseShell {
                 .into();
         }
         let panel = self.panel_for_bar(id);
+        if panel.presentation == ferese_panel::Presentation::Text {
+            return self.view_text_bar(id);
+        }
         if let Some(name) = &self.snapshot.binding_mode {
             return self.view_binding_mode(id, name);
         }

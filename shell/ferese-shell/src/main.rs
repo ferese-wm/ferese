@@ -29,6 +29,7 @@ mod rendering;
 mod status;
 mod status_ui;
 mod system_modal;
+mod system_stats;
 mod workspace_ui;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -165,6 +166,7 @@ struct FereseShell {
     notification_surface: Option<notification_ui::NotificationSurface>,
     status_service: status::Service,
     status: status::Snapshot,
+    system_stats: system_stats::Snapshot,
     connections: status_ui::connections::State,
     recorder: recording::Recorder,
     capture_status: capture_status::Model,
@@ -270,6 +272,7 @@ enum Message {
     WorkspaceIconsLoaded(Result<workspace_ui::IconIndex, String>),
     ToggleOverview,
     StatusUpdated(status::Update),
+    SystemStats(system_stats::Snapshot),
     StartRecording,
     StopRecording,
     NotificationEvent(notifications::Event),
@@ -356,6 +359,7 @@ impl cosmic::Application for FereseShell {
             notification_surface: None,
             status_service: status::Service::start(config.status.settings_command.clone()),
             status: status::Snapshot::default(),
+            system_stats: Default::default(),
             connections: Default::default(),
             recorder: recording::Recorder::default(),
             capture_status: capture_status::Model::new(),
@@ -377,13 +381,15 @@ impl cosmic::Application for FereseShell {
             guide_attempts: 0,
             pending_power: None,
             render: rendering::Rendering::new(&config),
+            clock: clock::current_time_for(
+                config.panels[0].presentation == ferese_panel::Presentation::Text,
+            ),
             config,
             wallpaper: None,
             control,
             snapshot: ShellSnapshot::default(),
             workspace_ui: Default::default(),
             overview_active: false,
-            clock: clock::current_time(),
             outputs: Vec::new(),
             effects_context: None,
         };
@@ -449,8 +455,11 @@ impl cosmic::Application for FereseShell {
                 )) => Some(Message::Event(event, id)),
                 _ => None,
             }),
-            clock::subscription(self.outputs.iter().any(|output| !output.hidden))
-                .map(Message::ClockChanged),
+            clock::subscription(
+                self.outputs.iter().any(|output| !output.hidden),
+                self.config.panels[0].presentation == ferese_panel::Presentation::Text,
+            )
+            .map(Message::ClockChanged),
             activities::subscription::subscription().map(Message::ActivitiesUpdated),
             self.activity_tick_subscription()
                 .map(|_| Message::ActivityTick),
@@ -471,6 +480,12 @@ impl cosmic::Application for FereseShell {
             self.recorder
                 .elapsed_subscription()
                 .map(|_| Message::RecorderElapsed),
+            system_stats::subscription(self.outputs.iter().any(|output| {
+                !output.hidden
+                    && self.panel_for_bar(output.bar).presentation
+                        == ferese_panel::Presentation::Text
+            }))
+            .map(Message::SystemStats),
             self.status_service
                 .subscription()
                 .map(Message::StatusUpdated),
@@ -720,6 +735,10 @@ impl cosmic::Application for FereseShell {
             Message::StopRecording => {
                 self.recorder.stop();
                 self.sync_hub_activity()
+            }
+            Message::SystemStats(snapshot) => {
+                self.system_stats = snapshot;
+                Task::none()
             }
             Message::StatusUpdated(update) => {
                 if update.generation >= self.status_service.generation {
@@ -1043,7 +1062,11 @@ impl cosmic::Application for FereseShell {
                             }
                             visibility_changed = true;
                             if let Some(effects) = &entry.effects
-                                && let Err(error) = effects.set_visible(!hidden)
+                                && let Err(error) = effects.set_visible(
+                                    !hidden
+                                        && entry.runtime.panel(&self.config.panels[0]).presentation
+                                            != ferese_panel::Presentation::Text,
+                                )
                             {
                                 eprintln!("ferese-shell: could not update panel material: {error}");
                             }
@@ -1192,6 +1215,11 @@ impl FereseShell {
             config.wallpaper.path = None;
         }
 
+        if self.config.panels[0].presentation != config.panels[0].presentation {
+            self.clock = clock::current_time_for(
+                config.panels[0].presentation == ferese_panel::Presentation::Text,
+            );
+        }
         self.render = rendering::Rendering::new(&config);
 
         if self.config.animations != config.animations {
@@ -1390,6 +1418,7 @@ mod tests {
             // service workers belong to the separate private-bus tests.
             status_service: status::Service::disconnected_for_test(),
             status: Default::default(),
+            system_stats: Default::default(),
             connections: Default::default(),
             recorder: Default::default(),
             capture_status: Default::default(),
@@ -1963,6 +1992,7 @@ mod tests {
 
     pub(super) fn snapshot_with_fullscreen_window(workspace: u64) -> ShellSnapshot {
         ShellSnapshot {
+            layouts: Default::default(),
             binding_mode: None,
             outputs: vec![OutputSnapshot {
                 id: 1,

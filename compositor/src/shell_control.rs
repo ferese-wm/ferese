@@ -13,7 +13,7 @@ use crate::private_client::ClientCapabilities;
 use crate::state::ClientState;
 
 pub(crate) fn init_global(display: &DisplayHandle) {
-    display.create_global::<Ferese, FereseShellManagerV1, _>(11, ());
+    display.create_global::<Ferese, FereseShellManagerV1, _>(12, ());
 }
 
 pub(crate) struct ShellData {
@@ -494,6 +494,10 @@ impl Ferese {
 
             if previous.id != view.id
                 || previous.output != Some(view.output)
+                || self
+                    .workspaces
+                    .workspace(view.id)
+                    .is_none_or(|workspace| workspace.layout.mode() != previous.layout)
                 || previous.index != view.index
                 || previous.window_count != view.window_count as u32
                 || previous.visible != view.visible
@@ -583,6 +587,12 @@ impl Ferese {
                 id: view.id,
                 output: Some(view.output),
                 name: view.index.to_string(),
+                layout: self
+                    .workspaces
+                    .workspace(view.id)
+                    .expect("workspace view exists")
+                    .layout
+                    .mode(),
                 index: view.index,
                 window_count: view.window_count as u32,
                 visible: view.visible,
@@ -733,6 +743,17 @@ impl ShellSnapshot {
                 u32::from(workspace.visible),
                 u32::from(workspace.focused),
             );
+            if shell.version() >= 12 {
+                shell.workspace_layout(
+                    workspace_hi,
+                    workspace_lo,
+                    match workspace.layout {
+                        ferese_core::LayoutMode::Scrolling => "scrolling",
+                        ferese_core::LayoutMode::Tree => "tree",
+                    }
+                    .into(),
+                );
+            }
         }
         for snapshot in &self.windows {
             let (window_hi, window_lo) = split_id(snapshot.id.0);
@@ -789,6 +810,7 @@ struct WorkspaceSnapshot {
     id: WorkspaceId,
     output: Option<OutputId>,
     name: String,
+    layout: ferese_core::LayoutMode,
     index: u32,
     window_count: u32,
     visible: bool,
@@ -1014,6 +1036,24 @@ mod tests {
         }
 
         assert_eq!(state.preview_cache_stats(), initial_cache);
+        let initial_mode = state.workspaces.active().layout.mode();
+        let other_mode = match initial_mode {
+            ferese_core::LayoutMode::Scrolling => ferese_core::LayoutMode::Tree,
+            ferese_core::LayoutMode::Tree => ferese_core::LayoutMode::Scrolling,
+        };
+        state
+            .workspaces
+            .set_active_layout_mode(other_mode, ferese_layout::Rect::new(0., 0., 800., 600.))
+            .unwrap();
+        assert!(
+            !state.shell_snapshot_matches(&original, true),
+            "layout-only changes must reach the bar"
+        );
+        state
+            .workspaces
+            .set_active_layout_mode(initial_mode, ferese_layout::Rect::new(0., 0., 800., 600.))
+            .unwrap();
+        assert!(state.shell_snapshot_matches(&original, true));
         state
             .workspaces
             .insert_window(WindowId(99), ferese_layout::Axis::Horizontal, 0.5)
@@ -1154,6 +1194,7 @@ mod tests {
                 id: WorkspaceId(1),
                 output: Some(OutputId(1)),
                 name: "1".into(),
+                layout: ferese_core::LayoutMode::Scrolling,
                 index: 1,
                 window_count: 1,
                 visible: true,
@@ -1182,6 +1223,7 @@ mod tests {
             |s| s.workspaces[0].index = 2,
             |s| s.workspaces[0].window_count = 0,
             |s| s.workspaces[0].name = "renamed".into(),
+            |s| s.workspaces[0].layout = ferese_core::LayoutMode::Tree,
             |s| s.windows[0].workspace = 2,
             |s| s.windows[0].title = "new title".into(),
             |s| s.windows[0].app_id = "new app".into(),

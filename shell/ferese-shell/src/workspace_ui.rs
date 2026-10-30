@@ -512,6 +512,7 @@ mod tests {
 
     fn snapshot(active: u64) -> ShellSnapshot {
         ShellSnapshot {
+            layouts: Default::default(),
             binding_mode: None,
             outputs: vec![OutputSnapshot {
                 id: 4,

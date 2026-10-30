@@ -10,6 +10,7 @@ pub mod menus;
 mod palette;
 pub mod panel;
 pub mod panel_surface;
+pub mod text_bar;
 mod typography;
 pub mod workspaces;
 

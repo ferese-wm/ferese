@@ -68,6 +68,21 @@ impl App {
     pub(super) fn panel_controls(&self) -> Element<'_, Message> {
         let palette = crate::visuals::Palette::from_resolved(&self.resolved.presented);
         let edge = self.preview_panel().map_or(Edge::Top, |panel| panel.edge);
+        if self
+            .preview_panel()
+            .is_ok_and(|panel| panel.presentation == ferese_panel::Presentation::Text)
+        {
+            return widget::column![
+                widget::container(widget::column![
+                    self.panel_heading("Text-only bar", 15.),
+                    self.panel_appearance_row("Enabled", "24px, opaque, square, using the active shell font.",
+                        ferese_theme::controls::switch(true, palette).name("Text-only bar")
+                            .on_press(Message::PanelEdit(Action::SetTextBar(false))).into()),
+                    self.note("Dynamic workspaces stay unchanged. Only existing workspaces are shown. Standard panel items and geometry are preserved while this presentation is enabled."),
+                ].spacing(12)).padding(16).class(crate::visuals::surface(palette.card, 14.)),
+            ].spacing(12).into();
+        }
+
         let mut rows = widget::column([]).spacing(12);
         match self.panel_page {
             PanelPage::Panels => {
@@ -148,6 +163,16 @@ impl App {
                 let mut appearance = widget::column([])
                     .spacing(16)
                     .push(self.panel_heading("Appearance", 15.))
+                    .push(self.panel_appearance_row(
+                        "Text-only bar",
+                        "A compact 24px bar using your shell font. Shape controls apply to the standard panel.",
+                        ferese_theme::controls::switch(
+                            self.draft.string("panels.0.presentation", "standard") == "text", palette,
+                        ).name("Text-only bar")
+                         .on_press(Message::PanelEdit(Action::SetTextBar(
+                            self.draft.string("panels.0.presentation", "standard") != "text",
+                         ))).into(),
+                    ))
                     .push(self.panel_style_choices(preset.unwrap_or_default()))
                     .push(self.panel_divider())
                     .push(self.panel_opacity_controls())

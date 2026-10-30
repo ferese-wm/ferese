@@ -235,7 +235,10 @@ impl App {
                 body = body.push(self.wallpaper_controls());
             }
             if self.page == Page::Bar
-                && self.panel_page != crate::panel_controls::PanelPage::Arrange
+                && (self.panel_page != crate::panel_controls::PanelPage::Arrange
+                    || self
+                        .preview_panel()
+                        .is_ok_and(|panel| panel.presentation == ferese_panel::Presentation::Text))
             {
                 body = body.push(self.panel_controls());
             }
@@ -518,7 +521,11 @@ impl App {
             );
         }
         if self.page == Page::Bar && self.search.is_empty() {
-            if self.panel_page == crate::panel_controls::PanelPage::Arrange {
+            if self.panel_page == crate::panel_controls::PanelPage::Arrange
+                && self
+                    .preview_panel()
+                    .is_ok_and(|panel| panel.presentation != ferese_panel::Presentation::Text)
+            {
                 content = content.push(self.panel_navigation());
             }
             content = content.push(self.panel_preview());
@@ -536,6 +543,9 @@ impl App {
         if self.page == Page::Bar
             && self.search.is_empty()
             && self.panel_page == crate::panel_controls::PanelPage::Arrange
+            && self
+                .preview_panel()
+                .is_ok_and(|panel| panel.presentation != ferese_panel::Presentation::Text)
         {
             content = content.push(self.panel_workspace());
         } else {

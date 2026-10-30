@@ -808,6 +808,14 @@ impl EffectsBinding {
         Ok(binding)
     }
 
+    pub(super) fn clear_panel_material(&self) -> Result<(), Box<dyn std::error::Error>> {
+        if self.panel_presentation.borrow_mut().take().is_some() {
+            self.surface.clear_role();
+            self.connection.flush()?;
+        }
+        Ok(())
+    }
+
     pub(super) fn set_panel_presentation(
         &self,
         scene: &ferese_panel::scene::Scene,

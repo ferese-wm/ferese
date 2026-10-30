@@ -16,6 +16,7 @@ use wayland_client::{Connection, Dispatch, Proxy, QueueHandle, delegate_noop};
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ShellSnapshot {
     pub(crate) binding_mode: Option<String>,
+    pub(crate) layouts: std::collections::BTreeMap<u64, String>,
     pub(crate) outputs: Vec<OutputSnapshot>,
     pub(crate) workspaces: Vec<WorkspaceSnapshot>,
     pub(crate) windows: Vec<WindowSnapshot>,
@@ -184,7 +185,7 @@ impl ShellControl {
         let connection = control_connection()?;
         let (globals, mut queue) = registry_queue_init::<ControlState>(&connection)?;
         let qh = queue.handle();
-        let manager = globals.bind::<FereseShellManagerV1, _, _>(&qh, 11..=11, ())?;
+        let manager = globals.bind::<FereseShellManagerV1, _, _>(&qh, 11..=12, ())?;
         let shell = manager.get_shell(&qh, ());
         shell.set_background_title_updates(0);
         let (sender, updates) = mpsc::channel();
@@ -507,6 +508,16 @@ impl Dispatch<FereseShellV1, ()> for ControlState {
                 active_workspace: join_id(active_workspace_hi, active_workspace_lo),
                 focused: focused != 0,
             }),
+            ferese_shell_v1::Event::WorkspaceLayout {
+                workspace_hi,
+                workspace_lo,
+                mode,
+            } => {
+                state
+                    .pending
+                    .layouts
+                    .insert(join_id(workspace_hi, workspace_lo), mode);
+            }
             ferese_shell_v1::Event::Workspace {
                 workspace_hi,
                 workspace_lo,
@@ -855,6 +866,43 @@ mod tests {
             error.kind(),
             std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
         ));
+    }
+
+    #[test]
+    fn workspace_layout_is_atomic_and_removed_with_the_next_snapshot() {
+        let (control, mut state, queue, _peer) = control_fixture_version(12);
+        for serial in 1..=2 {
+            dispatch_event(
+                &control,
+                &mut state,
+                &queue,
+                ferese_shell_v1::Event::SnapshotBegin { serial },
+            );
+            if serial == 1 {
+                dispatch_event(
+                    &control,
+                    &mut state,
+                    &queue,
+                    ferese_shell_v1::Event::WorkspaceLayout {
+                        workspace_hi: 1,
+                        workspace_lo: 7,
+                        mode: "scrolling".into(),
+                    },
+                );
+            }
+            assert!(control.poll().snapshot.is_none());
+            dispatch_event(
+                &control,
+                &mut state,
+                &queue,
+                ferese_shell_v1::Event::SnapshotEnd { serial },
+            );
+            let snapshot = control.poll().snapshot.unwrap();
+            assert_eq!(snapshot.layouts.len(), usize::from(serial == 1));
+            if serial == 1 {
+                assert_eq!(snapshot.layouts[&((1u64 << 32) | 7)], "scrolling");
+            }
+        }
     }
 
     fn dispatch_event(

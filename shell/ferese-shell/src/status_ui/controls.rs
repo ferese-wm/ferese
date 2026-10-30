@@ -23,7 +23,7 @@ pub(super) fn control_card<'a>(
 
 pub(super) fn menu_button<'a>(
     render: crate::rendering::Rendering,
-    label: &'a str,
+    label: impl Into<std::borrow::Cow<'a, str>> + 'a,
     message: Message,
     foreground: Color,
     opacity: f32,

@@ -462,8 +462,27 @@ impl FereseShell {
             }
             Menu::Notifications => notification_controls(self, rows, style, false),
             Menu::Activities => rows.push(self.activity_list(menu.anchor.parent, p)),
-            Menu::CaptureStatus => rows.push(self.view_hub_menu(kind, p)),
-            Menu::Recording | Menu::Workspaces => rows,
+            Menu::CaptureStatus | Menu::Recording => rows.push(self.view_hub_menu(kind, p)),
+            Menu::Workspaces => {
+                for workspace in self.snapshot.workspaces_for_output(
+                    self.output_for_bar(menu.anchor.parent)
+                        .map(|output| output.id),
+                ) {
+                    rows = rows.push(menu_button(
+                        self.render,
+                        format!(
+                            "{} · {} windows{}",
+                            workspace.index,
+                            workspace.window_count,
+                            if workspace.visible { " · current" } else { "" }
+                        ),
+                        Message::ActivateWorkspace(workspace.id),
+                        primary,
+                        p,
+                    ));
+                }
+                rows
+            }
             Menu::Overflow => self.view_panel_overflow(rows),
             Menu::Media => media::view(self, rows, style),
         };
