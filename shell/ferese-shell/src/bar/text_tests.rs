@@ -143,7 +143,17 @@ fn text_bar_layout_pixels_and_clicks_survive_redraws() {
     ] {
         for width in [320., 480., 800., 1440.] {
             let mut shell = fixture();
-            shell.config.theme.appearance = appearance;
+            shell.theme_snapshot.presented.appearance = appearance;
+            shell.theme_snapshot.presented.tokens = ferese_config::theme::preset(
+                if appearance == ferese_config::theme::Appearance::Dark {
+                    "ferese-blue"
+                } else {
+                    "ferese-blue-light"
+                },
+                appearance,
+            )
+            .expect("built-in fixture theme");
+            shell.config.apply_theme(&shell.theme_snapshot.presented);
             shell.config.font_family = Some("DejaVu Sans".into());
             shell.render = crate::rendering::Rendering::new(&shell.config);
             let mut focused = shell.snapshot.windows[0].clone();
@@ -294,7 +304,7 @@ fn text_bar_layout_pixels_and_clicks_survive_redraws() {
             let pixels = renderer.screenshot(Size::new(width as u32, 24), 1., Color::TRANSPARENT);
             if width == 1440. {
                 let pixel = |x: usize, y: usize| &pixels[(y * width as usize + x) * 4..][..4];
-                let palette = Palette::new(appearance);
+                let palette = Palette::from_resolved(&shell.theme_snapshot.presented);
                 assert_eq!(pixel(30, 1), palette.accent.into_rgba8());
                 assert_eq!(pixel(86, 1), palette.urgent.into_rgba8());
                 assert_eq!(pixel(4, 4), palette.text.into_rgba8());
@@ -415,4 +425,82 @@ fn text_wifi_distinguishes_disabled_disconnected_and_unavailable() {
     shell.system_stats = Default::default();
     let model = shell.text_bar_model(bar);
     assert!(model.cpu.is_none() && model.disk.is_none() && model.throughput.is_none());
+}
+
+#[test]
+fn text_bar_repaints_same_mode_theme_changes_without_recreating_the_surface() {
+    use cosmic::Application;
+    use ferese_config::theme::Appearance;
+
+    let mut shell = fixture();
+    let mut renderer = renderer();
+    let bar = shell.outputs[0].bar;
+    let mut tree = widget::Tree::empty();
+    let viewport = Rectangle::with_size(Size::new(1440., 24.));
+    for (appearance, background, accent, text, border) in [
+        (Appearance::Dark, "#182818", "#80E0A0", "#E8F8E8", "#406040"),
+        (Appearance::Dark, "#302010", "#FFC080", "#FFF0E0", "#786050"),
+        (
+            Appearance::Light,
+            "#F0E0D0",
+            "#804020",
+            "#201008",
+            "#907060",
+        ),
+    ] {
+        let mut snapshot = shell.theme_snapshot.clone();
+        snapshot.presented.appearance = appearance;
+        let tokens = &mut snapshot.presented.tokens;
+        tokens.surface.bar.background = background.into();
+        tokens.surface.bar.text_primary = text.into();
+        tokens.surface.bar.text_muted = text.into();
+        tokens.colors.accent = accent.into();
+        tokens.colors.border = border.into();
+        // Distinct general surface tokens catch accidentally using popup colors.
+        tokens.colors.surface_base = "#080810".into();
+        tokens.colors.text_primary = "#B0B0B0".into();
+        drop(shell.update(Message::ThemeChanged(Box::new(snapshot))));
+        assert_eq!(
+            shell.outputs[0].bar, bar,
+            "theme changes must reuse the panel surface"
+        );
+
+        let mut view = shell.view_layer(bar);
+        tree.diff(view.as_widget_mut());
+        let node = view.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
+        renderer.reset(viewport);
+        view.as_widget().draw(
+            &tree,
+            &mut renderer,
+            &shell.config.theme.palette().native_theme(),
+            &renderer::Style {
+                text_color: Color::WHITE,
+                icon_color: Color::WHITE,
+                scale_factor: 1.,
+            },
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &viewport,
+        );
+        let pixels = renderer.screenshot(Size::new(1440, 24), 1., Color::TRANSPARENT);
+        for (x, y, expected, role) in [
+            (1400, 1, background, "bar background"),
+            (30, 1, accent, "active workspace"),
+            (4, 4, text, "occupied workspace marker"),
+            (1400, 23, border, "bottom border"),
+        ] {
+            let offset = (y * 1440 + x) * 4;
+            assert_eq!(
+                &pixels[offset..offset + 4],
+                ferese_theme::parse_color(expected)
+                    .expect("valid fixture color")
+                    .into_rgba8(),
+                "{role} did not follow the {appearance:?} theme with background {background}"
+            );
+        }
+    }
 }

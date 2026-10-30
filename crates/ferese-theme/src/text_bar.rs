@@ -2,7 +2,7 @@
 use cosmic::iced::{Alignment, Background, Color, Font, Length, Rectangle};
 use cosmic::widget::{button, container, row};
 use cosmic::{Element, theme};
-use ferese_theme_model::Appearance;
+use ferese_theme_model::{Appearance, ResolvedTheme};
 
 mod responsive;
 
@@ -24,43 +24,41 @@ pub struct Palette {
 }
 
 impl Palette {
-    /// Both variants follow the shared resolver's effective appearance.
+    /// Use the presented theme, including bar-specific foreground and surface tokens.
+    /// The text presentation is opaque even when other shell surfaces are translucent.
+    ///
+    /// # Panics
+    /// Panics if a used theme color is invalid. Resolve and validate the theme first.
     #[must_use]
-    pub fn new(appearance: Appearance) -> Self {
-        let rgb = |hex: u32| Color::from_rgb8((hex >> 16) as u8, (hex >> 8) as u8, hex as u8);
-        let [
-            background,
-            border,
-            text,
-            bright,
-            muted,
-            divider,
-            accent,
-            on_accent,
-            urgent,
-            on_urgent,
-        ] = match appearance {
-            Appearance::Dark => [
-                0x14181f, 0x222a36, 0xc9d1d9, 0xe6edf3, 0x7d8898, 0x3a4352, 0x5b8cff, 0x0b1020,
-                0xff6b6b, 0x1a0b0b,
-            ],
-            Appearance::Light => [
-                0xeef1f6, 0xd3dae5, 0x1c2430, 0x1c2430, 0x5f6b7a, 0xaab4c3, 0x2f5fd0, 0xffffff,
-                0xc92a2a, 0xffffff,
-            ],
-        }
-        .map(rgb);
+    pub fn from_resolved(theme: &ResolvedTheme) -> Self {
+        let color =
+            |value: &str| crate::parse_color(value).expect("validated resolved theme color");
+        let bar = &theme.tokens.surface.bar;
+        let colors = &theme.tokens.colors;
+        let background = Color {
+            a: 1.,
+            ..color(&bar.background)
+        };
+        let text = crate::foreground(background, color(&bar.text_primary));
+        let muted = crate::foreground(background, color(&bar.text_muted));
+        let border = crate::composite(color(&colors.border), background);
+        let accent = crate::composite(color(&colors.accent), background);
+        // Urgency remains a semantic warning, independent of the selected accent.
+        let urgent = match theme.appearance {
+            Appearance::Dark => Color::from_rgb8(255, 107, 107),
+            Appearance::Light => Color::from_rgb8(201, 42, 42),
+        };
         Self {
             background,
             border,
             text,
-            bright,
+            bright: text,
             muted,
-            divider,
+            divider: border,
             accent,
-            on_accent,
+            on_accent: crate::foreground(accent, color(&colors.on_accent)),
             urgent,
-            on_urgent,
+            on_urgent: crate::foreground(urgent, text),
         }
     }
 }
@@ -426,4 +424,67 @@ fn fit(mut model: Model, font: Font, available: f32) -> (Model, bool) {
 
 fn widget_id(value: impl AsRef<str>) -> cosmic::iced::advanced::widget::Id {
     cosmic::iced::advanced::widget::Id::new(format!("text-bar:{}", value.as_ref()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn palette_uses_bar_specific_tokens_and_current_accent() {
+        let mut theme = ferese_config::theme::default_theme();
+        theme.tokens.surface.bar.background = "#102030".into();
+        theme.tokens.surface.bar.text_primary = "#F4EEE2".into();
+        theme.tokens.surface.bar.text_muted = "#BAC8D0".into();
+        theme.tokens.colors.surface_base = "#080808".into();
+        theme.tokens.colors.text_primary = "#FFFFFF".into();
+        theme.tokens.colors.accent = "#E0A060".into();
+        theme.tokens.colors.on_accent = "#102030".into();
+        theme.tokens.colors.border = "#223344".into();
+        let palette = Palette::from_resolved(&theme);
+        assert_eq!(palette.background, Color::from_rgb8(16, 32, 48));
+        assert_eq!(palette.text, Color::from_rgb8(244, 238, 226));
+        assert_eq!(palette.bright, palette.text);
+        assert_eq!(palette.muted, Color::from_rgb8(186, 200, 208));
+        assert_eq!(palette.accent, Color::from_rgb8(224, 160, 96));
+        assert_eq!(palette.on_accent, Color::from_rgb8(16, 32, 48));
+        assert_eq!(palette.border, Color::from_rgb8(34, 51, 68));
+        assert_eq!(palette.divider, palette.border);
+    }
+
+    #[test]
+    fn translucent_tokens_keep_the_bar_opaque_and_cell_labels_readable() {
+        let mut theme = ferese_config::theme::default_theme();
+        theme.tokens.material.style = "translucent".into();
+        theme.tokens.material.opacity = 0.;
+        theme.tokens.surface.bar.background = "#10203000".into();
+        theme.tokens.colors.accent = "#F8A04080".into();
+        theme.tokens.colors.on_accent = "#F8A04000".into();
+        let palette = Palette::from_resolved(&theme);
+        assert_eq!(palette.background, Color::from_rgb8(16, 32, 48));
+        assert_eq!(palette.accent.into_rgba8(), [132, 96, 56, 255]);
+        for color in [
+            palette.background,
+            palette.border,
+            palette.text,
+            palette.bright,
+            palette.muted,
+            palette.divider,
+            palette.accent,
+            palette.on_accent,
+            palette.urgent,
+            palette.on_urgent,
+        ] {
+            assert_eq!(color.a, 1., "text-bar colors must remain opaque");
+        }
+        for (background, foreground) in [
+            (palette.accent, palette.on_accent),
+            (palette.urgent, palette.on_urgent),
+        ] {
+            assert!(
+                crate::contrast(background, foreground) >= 4.5,
+                "filled cell labels must remain readable"
+            );
+        }
+    }
 }

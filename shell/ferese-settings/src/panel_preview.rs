@@ -144,7 +144,7 @@ impl App {
                     interactive: false,
                 },
                 self.font,
-                Palette::new(self.resolved.presented.appearance),
+                Palette::from_resolved(&self.resolved.presented),
                 |_, _| Message::PanelEdit(crate::panel_edit::Action::SetTextBar(true)),
             );
         }

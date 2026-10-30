@@ -9,7 +9,7 @@ panel main {
 }
 ```
 
-The presentation uses a 24px opaque bar, 28px numbered workspace cells, the active shell font at 13px, square corners and a one-pixel bottom rule. Dark and light palettes follow the shared appearance resolver; no theme-mode label is shown on the bar. The bar does not request compositor material effects, blur or shadows. Its text controls open the existing sound, battery, Control Center and calendar popups; `settings` opens Control Center.
+The presentation uses a 24px opaque bar, 28px numbered workspace cells, the active shell font at 13px, square corners and a one-pixel bottom rule. The bar background, primary and muted text, accent and bottom rule follow the shared resolved theme, including live changes between families in the same appearance mode; no theme-mode label is shown on the bar. Urgency retains its semantic red, and text on filled cells uses a readable foreground. The bar remains opaque even when the theme uses translucent materials. The bar does not request compositor material effects, blur or shadows. Its text controls open the existing sound, battery, Control Center and calendar popups; `settings` opens Control Center.
 
 Workspace cells follow the monitor’s dynamic workspace list, including its real spare workspace. No unused numbered placeholders are drawn. Cells display the current workspace indices and activate their stable IDs; they appear and disappear as workspaces are created or removed. `scroll` and `[]=` reflect the active workspace's scrolling and tree layouts; an older compositor without layout metadata displays `?`.
 

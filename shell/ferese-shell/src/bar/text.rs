@@ -99,7 +99,7 @@ impl FereseShell {
         let content = text_bar::view(
             self.text_bar_model(id),
             self.render.font,
-            Palette::new(self.config.theme.appearance),
+            Palette::from_resolved(&self.theme_snapshot.presented),
             move |action, rectangle| {
                 if let Action::Workspace(workspace) = action {
                     return cosmic::Action::App(Message::ActivateWorkspace(workspace));

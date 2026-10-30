@@ -16,7 +16,7 @@ import time
 import unittest
 
 from session_socket import ipc_environment, ipc_socket
-from PIL import Image
+from PIL import Image, ImageColor
 
 
 @unittest.skipUnless(os.environ.get("FERESE_TEST_TEXT_BAR") == "1", "opt-in nested text bar test")
@@ -34,9 +34,9 @@ class TextBarTest(unittest.TestCase):
             config = root / "config/ferese/config.kdl"
             config.parent.mkdir(parents=True)
 
-            def configure(presentation):
+            def configure(presentation, family="ferese-blue"):
                 config.write_text('layout-mode "scrolling"\nstatus { keybinding-guide #false; }\n'
-                                  'theme { mode "dark"; }\n'
+                                  f'theme {{ mode "dark"; family "{family}"; }}\n'
                                   f'panel main {{ style "flat"; presentation "{presentation}"; }}\n')
 
             configure("text")
@@ -90,24 +90,49 @@ class TextBarTest(unittest.TestCase):
                     control("toggle-layout")
                     wait_for(lambda: '"tree"' in log_path.read_text())
                     control("toggle-layout")
-                    for mode in ("light", "dark"):
-                        control("theme", "mode", mode)
+                    def target_colors():
+                        tokens = json.loads(control("-j", "theme", "get"))["theme"]["tokens"]
+                        background = ImageColor.getcolor(tokens["surface"]["bar"]["background"], "RGBA")[:3]
+                        accent = ImageColor.getcolor(tokens["colors"]["accent"], "RGBA")
+                        alpha = accent[3] / 255
+                        accent = tuple(round(accent[i] * alpha + background[i] * (1 - alpha)) for i in range(3))
+                        return accent, background
+
+                    def wait_for_colors(expected):
                         png = None
+                        actual = None
 
                         def rendered():
-                            nonlocal png
+                            nonlocal png, actual
                             png = control("screenshot")
                             image = Image.open(io.BytesIO(png)).convert("RGB")
-                            # A protocol configure alone is not a painted bar.
-                            # Wait for the actual GPU frame, including a theme switch.
-                            accent = (91, 140, 255) if mode == "dark" else (47, 95, 208)
-                            background = (20, 24, 31) if mode == "dark" else (238, 241, 246)
-                            return image.getpixel((2, 2)) == accent and image.getpixel((image.width - 2, 2)) == background
+                            actual = image.getpixel((2, 2)), image.getpixel((image.width - 2, 2))
+                            return actual == expected
 
-                        wait_for(rendered)
+                        try:
+                            wait_for(rendered)
+                        except AssertionError as error:
+                            raise AssertionError(f"Bar colors: expected {expected}, rendered {actual}") from error
+                        return png
+
+                    for mode in ("light", "dark"):
+                        control("theme", "mode", mode)
+                        wait_for(lambda: json.loads(control("-j", "theme", "get"))["theme"]["appearance"] == mode)
+                        png = wait_for_colors(target_colors())
                         if destination := os.environ.get("FERESE_TEST_TEXT_BAR_PREVIEWS"):
                             Path(destination).mkdir(parents=True, exist_ok=True)
                             (Path(destination) / f"nested-{mode}.png").write_bytes(png)
+                    # A family change must repaint even when appearance stays dark.
+                    previous = target_colors()
+                    for family in ("catppuccin", "gruvbox"):
+                        configure("text", family)
+                        control("reload-config")
+                        snapshot = json.loads(control("-j", "theme", "get"))
+                        self.assertEqual(snapshot["theme"]["appearance"], "dark")
+                        expected = target_colors()
+                        self.assertNotEqual(expected, previous, "fixture families must have distinct colors")
+                        wait_for_colors(expected)
+                        previous = expected
                     configure("standard")
                     control("reload-config")
                     wait_for(lambda: '.set_panel_presentation(' in log_path.read_text())
